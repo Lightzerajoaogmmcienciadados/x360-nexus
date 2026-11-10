@@ -1,4 +1,3 @@
-
 use jni::JNIEnv;
 use jni::objects::{JClass, JString};
 use jni::sys::jstring;
@@ -15,3 +14,4 @@ Java_com_x360nexus_MainActivity_nativeVersion(
 
     result.into_raw()
 }
+pub mod cpu;
