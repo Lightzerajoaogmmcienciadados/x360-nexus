@@ -1,9 +1,8 @@
-name: X360 Nexus Android 0.5
+name: X360 Nexus Android Rust JNI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -11,14 +10,13 @@ permissions:
 
 jobs:
   build:
-    name: Build Android APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -31,35 +29,43 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
 
-      - name: Check Android SDK
+      - name: Test Rust core
+        run: cargo test --manifest-path core/Cargo.toml
+
+      - name: Compile Rust for Android ARM64
         shell: bash
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          ls -la "$ANDROID_HOME"
+          set -e
+          rustup target add aarch64-linux-android
 
-      - name: Test Rust Core
-        shell: bash
-        run: |
-          cargo test --manifest-path core/Cargo.toml
+          NDK="$ANDROID_HOME/ndk"
+          NDK_VERSION=$(ls "$NDK" | sort -V | tail -1)
+          TOOLCHAIN="$NDK/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+          test -d "$TOOLCHAIN"
+
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TOOLCHAIN/aarch64-linux-android24-clang"
+
+          cargo build \
+            --manifest-path core/Cargo.toml \
+            --target aarch64-linux-android \
+            --release
+
+          mkdir -p android/app/src/main/jniLibs/arm64-v8a
+
+          cp core/target/aarch64-linux-android/release/libx360nexus.so \
+             android/app/src/main/jniLibs/arm64-v8a/
 
       - name: Build Android APK
         working-directory: android
-        shell: bash
-        run: |
-          gradle :app:assembleDebug --no-daemon --stacktrace
-
-      - name: Verify APK
-        shell: bash
-        run: |
-          test -f android/app/build/outputs/apk/debug/app-debug.apk
-          ls -lh android/app/build/outputs/apk/debug/app-debug.apk
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: X360-Nexus-v0.5-APK
+          name: X360-Nexus-Rust-JNI-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          retention-days: 30
