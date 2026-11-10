@@ -1,0 +1,16 @@
+x360-nexus/
+├── Cargo.toml
+├── src/
+│   └── main.rs
+├── android/
+│   ├── settings.gradle
+│   ├── build.gradle
+│   └── app/
+│       ├── build.gradle
+│       └── src/main/
+│           ├── AndroidManifest.xml
+│           └── java/com/x360nexus/
+│               └── MainActivity.java
+└── .github/workflows/
+    ├── build.yml
+    └── android.yml
