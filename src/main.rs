@@ -1,4 +1,4 @@
-
+mod xenon_cpu;
 use eframe::egui;
 use std::path::PathBuf;
 
