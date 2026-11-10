@@ -12,3 +12,8 @@ rfd = "0.15"
 opt-level = 3
 lto = true
 strip = true
+
+x360-nexus/
+├── Cargo.toml
+└── src/
+    └── main.rs
