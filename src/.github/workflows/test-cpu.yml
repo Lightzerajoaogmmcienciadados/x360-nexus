@@ -1,0 +1,17 @@
+name: Testar CPU Xenon
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'src/xenon_cpu.rs'
+      - '.github/workflows/test-cpu.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Testar CPU
+        run: rustc --edition 2021 --test src/xenon_cpu.rs -o cpu_tests && ./cpu_tests
