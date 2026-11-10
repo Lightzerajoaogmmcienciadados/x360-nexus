@@ -17,7 +17,7 @@ public class MainActivity extends Activity {
     private static final boolean RUST_AVAILABLE;
     static {
         boolean loaded;
-        try { System.loadLibrary("x360_nexus_core"); loaded = true; }
+        try { System.loadLibrary("x360nexus"); loaded = true; }
         catch (UnsatisfiedLinkError error) { loaded = false; }
         RUST_AVAILABLE = loaded;
     }
