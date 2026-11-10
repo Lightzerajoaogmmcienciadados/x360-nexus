@@ -14,6 +14,14 @@ import java.util.Locale;
 
 public class MainActivity extends Activity {
     private static final int PICK_FILE = 100;
+    private static final boolean RUST_AVAILABLE;
+    static {
+        boolean loaded;
+        try { System.loadLibrary("x360_nexus_core"); loaded = true; }
+        catch (UnsatisfiedLinkError error) { loaded = false; }
+        RUST_AVAILABLE = loaded;
+    }
+    private native String nativeSelfTest();
     private TextView result;
     private LinearLayout root;
     private int green = Color.rgb(30, 210, 95);
@@ -33,7 +41,7 @@ public class MainActivity extends Activity {
         root.setPadding(25, 40, 25, 25);
         root.setBackgroundColor(Color.rgb(10, 17, 13));
         root.addView(text("X360 NEXUS", 32, green));
-        root.addView(text("Android 0.3 • Analisador experimental de arquivos Xbox 360", 15, Color.WHITE));
+        root.addView(text("Android 0.5 • Nucleo Rust JNI e analisador experimental de arquivos Xbox 360", 15, Color.WHITE));
         Button open = new Button(this);
         open.setText("SELECIONAR ARQUIVO DE JOGO");
         open.setOnClickListener(v -> {
@@ -43,6 +51,17 @@ public class MainActivity extends Activity {
             startActivityForResult(i, PICK_FILE);
         });
         root.addView(open);
+        Button test = new Button(this);
+        test.setText("TESTAR CPU RUST + KERNEL");
+        test.setOnClickListener(v -> {
+            if (!RUST_AVAILABLE) {
+                result.setText("Biblioteca Rust nao encontrada no APK.");
+                return;
+            }
+            try { result.setText(nativeSelfTest()); }
+            catch (Throwable error) { result.setText("Erro no nucleo: " + error.getMessage()); }
+        });
+        root.addView(test);
         result = text("Selecione um arquivo ISO, XEX ou outro formato para inspecionar.\n\nA execução de jogos ainda não está implementada.", 16, Color.LTGRAY);
         root.addView(result);
         scroll.addView(root);
