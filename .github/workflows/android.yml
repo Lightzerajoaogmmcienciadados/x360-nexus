@@ -15,11 +15,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
-      - uses: android-actions/setup-android@v3
-      - name: Install Android NDK
         run: sdkmanager 'ndk;27.2.12479018'
       - uses: dtolnay/rust-toolchain@stable
         with:
