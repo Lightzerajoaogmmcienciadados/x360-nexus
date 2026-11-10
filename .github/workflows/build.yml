@@ -1,0 +1,28 @@
+
+name: X360 Nexus Windows
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Baixar codigo
+        uses: actions/checkout@v4
+
+      - name: Instalar Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Compilar EXE
+        run: cargo build --release
+
+      - name: Disponibilizar EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: X360-Nexus-Windows
+          path: target/release/x360-nexus.exe
+          if-no-files-found: error
