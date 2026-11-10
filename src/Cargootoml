@@ -1,4 +1,4 @@
 x360-nexus/
-├── Cargoo.toml
+├── Cargo.toml
 └── src/
     └── main.rs
