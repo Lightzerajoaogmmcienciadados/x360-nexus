@@ -1,12 +1,16 @@
-# Project Xenon 4.9 — XEX Image Engine
+# Project Xenon 5.0 — XEX Boot Engine
 
-Baseado no código completo da v4.8. Adiciona `core/src/xex_image.rs` com inspeção limitada do descritor XEX2 `Base file format`, tipo de armazenamento e código de criptografia, com checagem de limites e testes unitários.
+Projeto Android + Rust baseado na versão 4.9. Inclui o módulo `core/src/xex_boot.rs` e botão **TESTAR XEX BOOT HOMEBREW**.
 
-## Android
-O botão **TESTAR XEX IMAGE ENGINE** executa um teste sintético no núcleo Rust JNI. Não analisa automaticamente a ISO selecionada. O botão de análise da ISO continua disponível como na v4.8.
-
-## Compilar
-`cargo test --manifest-path core/Cargo.toml` e GitHub Actions > workflow Android > Run workflow na branch v4.9.
+## Implementado
+- Carregamento de payload PowerPC de XEX2 sintético, não criptografado, não comprimido e sem imports Xbox.
+- Validação de base, entry point, tamanho e alinhamento.
+- Mapeamento na memória virtual e execução de quatro instruções de teste com orçamento limitado.
+- JNI Android e teste Rust `cargo test --manifest-path core/Cargo.toml`.
+- Preservados os módulos de análise XDVDFS/XEX2 e controles da versão 4.9.
 
 ## Limitações
-**Não executa Minecraft Xbox 360.** Não inclui descriptografia, descompressão, mapeamento real de código XEX, imports do kernel nem emulação Xenos. A leitura de formato é um diagnóstico; o teste usa dados sintéticos. Código-fonte não compilado/testado neste ambiente.
+**Não inicia Minecraft Xbox 360 nem outros jogos comerciais.** Não há descriptografia, descompressão real de XEX, relocação, imports de kernel Xbox 360, GPU Xenos nem execução de XEX reais complexos. O teste é sintético e não deve ser confundido com compatibilidade de jogos.
+
+## Build
+Envie os arquivos do projeto a uma branch `feature/project-xenon-v5.0`, abra GitHub Actions e execute o workflow Android. Não foi possível compilar localmente neste ambiente; compile e valide antes de instalar.
