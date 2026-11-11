@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   build:
-    name: Build X360 Nexus Android
+    name: Build X360 Nexus Android v4.0
     runs-on: ubuntu-latest
 
     steps:
@@ -79,7 +79,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: X360-Nexus-Android-APK
+          name: X360-Nexus-v4.0-Android-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
