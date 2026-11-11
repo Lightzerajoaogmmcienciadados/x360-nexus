@@ -44,6 +44,32 @@ pub fn root_entries<R:Read+Seek>(r:&mut R,iso:&IsoInfo)->Result<Vec<DiscEntry>,S
  }
  Ok(out)
 }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XexOptionalHeader {
+    pub key:u32,
+    pub value:u32,
+}
+/// Only decodes the raw optional-header table, not encrypted image data.
+pub fn inspect_xex_optionals(data:&[u8])->Result<Vec<XexOptionalHeader>,String>{
+    let header=inspect_xex(data)?;
+    if header.optional_headers>1024 {
+        return Err("Too many XEX optional headers".into());
+    }
+    let count=header.optional_headers as usize;
+    let total=count.checked_mul(8).and_then(|n|n.checked_add(24))
+        .ok_or("Optional header table overflow")?;
+    if total>data.len(){
+        return Err("Tabela XEX opcional truncada".into());
+    }
+    let mut items=Vec::with_capacity(count);
+    for chunk in data[24..total].chunks_exact(8) {
+        items.push(XexOptionalHeader {
+            key:u32::from_be_bytes(chunk[0..4].try_into().unwrap()),
+            value:u32::from_be_bytes(chunk[4..8].try_into().unwrap()),
+        });
+    }
+    Ok(items)
+}
 #[derive(Debug,Clone)]pub struct XexInfo{pub module_flags:u32,pub header_size:u32,pub security_offset:u32,pub optional_headers:u32}
 pub fn inspect_xex(data:&[u8])->Result<XexInfo,String>{
  if data.len()<24||identify(data)!=FileKind::Xex2{return Err("Cabecalho XEX2 invalido".into())}
@@ -66,6 +92,7 @@ pub struct DiscXexInfo {
     pub file_size: u32,
     pub file_offset: u64,
     pub xex: XexInfo,
+    pub optionals: Vec<XexOptionalHeader>,
 }
 
 /// Scans the already validated root directory for default.xex, then reads a
@@ -94,16 +121,18 @@ pub fn inspect_disc_default_xex<R: Read + Seek>(
     if end > iso.image_size {
         return Err("O arquivo XEX ultrapassa os limites da ISO".into());
     }
-    let read_len = (entry.size as usize).min(4096);
+    let read_len = (entry.size as usize).min(16 * 1024);
     let mut header = vec![0u8; read_len];
     reader.seek(SeekFrom::Start(offset)).map_err(|e|e.to_string())?;
     reader.read_exact(&mut header).map_err(|e|e.to_string())?;
     let xex = inspect_xex(&header)?;
+    let optionals = inspect_xex_optionals(&header)?;
     Ok(Some(DiscXexInfo {
         name: entry.name.clone(),
         file_size: entry.size,
         file_offset: offset,
         xex,
+        optionals,
     }))
 }
 
@@ -155,5 +184,27 @@ mod disc_boot_tests {
         assert!(inspect_disc_default_xex(
             &mut Cursor::new(bytes), &info, &entries
         ).unwrap().is_none());
+    }
+}
+
+#[cfg(test)] mod extra_xex_tests {
+    use super::*;
+    #[test] fn extracts_two_optional_headers(){
+        let mut xex=vec![0u8;40];
+        xex[0..4].copy_from_slice(b"XEX2");
+        xex[20..24].copy_from_slice(&2u32.to_be_bytes());
+        xex[24..28].copy_from_slice(&0x0001_0000u32.to_be_bytes());
+        xex[28..32].copy_from_slice(&0x8200_0000u32.to_be_bytes());
+        xex[32..36].copy_from_slice(&0x0002_0001u32.to_be_bytes());
+        xex[36..40].copy_from_slice(&0x0000_1000u32.to_be_bytes());
+        let items=inspect_xex_optionals(&xex).unwrap();
+        assert_eq!(items.len(),2);
+        assert_eq!(items[0].value,0x8200_0000);
+        assert_eq!(items[1].key,0x0002_0001);
+    }
+    #[test] fn never_reads_truncated_optional_table(){
+        let mut xex=vec![0u8;24];xex[0..4].copy_from_slice(b"XEX2");
+        xex[20..24].copy_from_slice(&1u32.to_be_bytes());
+        assert!(inspect_xex_optionals(&xex).is_err());
     }
 }

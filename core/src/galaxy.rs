@@ -6,12 +6,16 @@ pub fn run_demo()->Result<String,String> {
     let code=[0x38,0x60,0,42,0x38,0x83,0,8,0x90,0x80,0,64,0x80,0xA0,0,64];
     m.load_test_program(&code).map_err(str::to_owned)?;
     for _ in 0..4{m.step()?}
+    // Experimental virtual mapping, not Xbox 360 TLB or its MMU.
+    m.memory.map(0x8200_0000,0,4096,crate::memory::Permissions::RX)
+        .map_err(str::to_owned)?;
+    let mapped=m.memory.read_exec_u32_be(0x8200_0000).map_err(str::to_owned)?;
     m.gpu.clear([5,20,12,255]);
     m.gpu.rect(20,20,24,24,[85,215,112,255]);
     m.audio.push(&[200,-200,100,-100]).map_err(str::to_owned)?;
     let rgba=m.gpu.framebuffer();
     let green_pixels=rgba.chunks_exact(4).filter(|p|p[1]==215).count();
-    Ok(format!("Xenon PPC subset: r3={} r4={} r5={}\nKernel ticks={}\nGPU framebuffer={}x{}, quad={}px\nAudio FIFO={} samples",
-        m.cpu.gpr[3],m.cpu.gpr[4],m.cpu.gpr[5],m.kernel.ticks(),m.gpu.width,m.gpu.height,green_pixels,m.audio.queued()))
+    Ok(format!("Xenon PPC subset: r3={} r4={} r5={}\nKernel ticks={}\nMemoria virtual experimental: 0x82000000 => fisico 0, instrucao 0x{:08X}\nGPU framebuffer={}x{}, quad={}px\nAudio FIFO={} samples",
+        m.cpu.gpr[3],m.cpu.gpr[4],m.cpu.gpr[5],m.kernel.ticks(),mapped,m.gpu.width,m.gpu.height,green_pixels,m.audio.queued()))
 }
 #[cfg(test)]mod tests{#[test]fn demo(){let msg=super::run_demo().unwrap();assert!(msg.contains("r3=42"));assert!(msg.contains("r4=50"));assert!(msg.contains("r5=50"));}}

@@ -74,6 +74,7 @@ public final class MainActivity extends Activity {
     private TextView padStatus;
     private int tabIndex = 0;
     private volatile boolean audioPlaying = false;
+    private volatile int toneFrequency = 220;
     private Thread audioThread;
     private AudioTrack audioTrack;
     private final Object audioGuard = new Object();
@@ -195,7 +196,7 @@ public final class MainActivity extends Activity {
         glp.topMargin=dp(14);content.addView(surface,glp);
         add(content,text("Visualização OpenGL ES 2.0 original • NÃO é a GPU Xenos",12,MUTED,false),10);
         LinearLayout diag=panel("DIAGNÓSTICO DO EMULADOR",
-            "CPU Xenon: subconjunto PowerPC\nGPU: framebuffer Rust + OpenGL ES 2.0\nÁudio: PCM sintetizado via Rust/AudioTrack\nKernel: threads e ciclos experimentais\nControles: tela sensível ao toque + gamepad Android");
+            "CPU Xenon: subconjunto PowerPC\nMemória virtual: regiões R/W/X experimentais\nGPU: framebuffer Rust + OpenGL ES 2.0\nÁudio: PCM sintetizado via Rust/AudioTrack\nKernel: threads e ciclos experimentais\nISO/XEX2: análise de cabeçalhos opcionais\nControles: tela sensível ao toque + gamepad Android");
         add(content,diag,16);
         Button run=button("Executar diagnóstico CPU + GPU + kernel");
         add(diag,run,14);
@@ -210,18 +211,31 @@ public final class MainActivity extends Activity {
     private void core() {
         heading("Núcleo Rust / Xenon","Ferramentas executadas localmente no aparelho.");
         status("CPU PowerPC experimental",
-            "Instruções: addi/addis, OR/AND/XOR, comparações, load/store, branch e extensões.\nAinda faltam MMU, VMX128, SMT, JIT e grande parte da ISA.");
-        status("Kernel e memória","Memória big-endian e fila de threads experimental. Sem implementação completa das APIs Xbox 360.");
+            "Instruções: addi/addis, mulli, subfic, OR/AND/XOR, comparações, load/store, branches, LR/CTR e extensões.\nAinda faltam MMU, VMX128, SMT, JIT e grande parte da ISA.");
+        status("Kernel e memória","Memória big-endian, regiões virtuais de 4 KiB com permissões R/W/X e threads experimentais. Não é uma MMU Xbox 360.");
         status("GPU","Framebuffer RGBA em Rust + cena OpenGL ES 2.0 no Android. Sem tradução de shaders ou comandos Xenos.");
+        status("Análise XEX2","Leitura da tabela opcional (chave e valor) e localização do Default.xex dentro da ISO. O módulo comercial não é iniciado.");
         LinearLayout audio=panel("ÁUDIO NATIVO","Aperte para ouvir um sinal de diagnóstico sintetizado pelo núcleo Rust.");
         add(content,audio,12);
+        TextView frequency=text("Frequência: "+toneFrequency+" Hz",13,LIGHT,false);
+        add(audio,frequency,11);
+        SeekBar hz=new SeekBar(this);
+        hz.setMax(700);hz.setProgress(toneFrequency-100);add(audio,hz,6);
+        hz.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            @Override public void onProgressChanged(SeekBar b,int p,boolean fromUser){
+                toneFrequency=p+100;
+                frequency.setText("Frequência: "+toneFrequency+" Hz");
+            }
+            @Override public void onStartTrackingTouch(SeekBar b){}
+            @Override public void onStopTrackingTouch(SeekBar b){}
+        });
         Button toggle=button(audioPlaying?"Parar áudio":"Tocar teste de áudio");
         add(audio,toggle,13);
         TextView info=text(audioPlaying?"Em reprodução":"48 kHz • PCM 16-bit • Mono",12,MUTED,false);
         add(audio,info,8);
         toggle.setOnClickListener(v->{
             if(audioPlaying){stopSound();toggle.setText("Tocar teste de áudio");info.setText("Parado");}
-            else if(RUST_AVAILABLE){startSound();toggle.setText("Parar áudio");info.setText("Sinal PCM gerado pelo Rust");}
+            else if(RUST_AVAILABLE){info.setText("Iniciando AudioTrack...");toggle.setText("Parar áudio");startSound(info,toggle);}
             else {info.setText("Falha: núcleo Rust não carregado");}
         });
         LinearLayout cpu=panel("AUTOTESTES RUST","Executa instruções PowerPC e verifica framebuffer, áudio FIFO e ticks do kernel.");
@@ -410,9 +424,9 @@ public final class MainActivity extends Activity {
         return super.onGenericMotionEvent(event);
     }
     private void about() {
-        heading("Sobre o X360 Nexus","Build Android 6.1 • Experimental nativo");
+        heading("Sobre o X360 Nexus","Build Android 6.2 • Experimental nativo");
         status("ARQUITETURA","Android SDK + OpenGL ES 2.0 + AudioTrack + Rust JNI aarch64.");
-        status("SUPORTE ATUAL","Inspeção ISO/XDVDFS incluindo default.xex, diagnóstico XEX2, execução isolada de programas PPC brutos, biblioteca local, controles Android, núcleo CPU experimental, GPU diagnóstica e áudio PCM.");
+        status("SUPORTE ATUAL","ISO/XDVDFS e default.xex, tabela opcional XEX2, memória virtual experimental R/W/X, mais operações PPC, biblioteca local, controles Android, GPU diagnóstica e áudio PCM com frequência ajustável.");
         status("LIMITAÇÕES IMPORTANTES","Sem JIT PPC, MMU Xbox completa, APIs XAM/Xbox Kernel, decodificador XMA, tradutor Xenos, renderização 360 e execução de jogos comerciais.");
         status("PRIVACIDADE","Arquivos escolhidos permanecem no aparelho. A biblioteca guarda URIs locais, nomes, tamanhos e resultados de inspeção.");
     }
@@ -464,7 +478,7 @@ public final class MainActivity extends Activity {
                     }
                 }
             } else {
-                byte[] h=new byte[8192];
+                byte[] h=new byte[16384];
                 int n=0;
                 try(InputStream input=getContentResolver().openInputStream(uri)){
                     if(input!=null){
@@ -493,35 +507,51 @@ public final class MainActivity extends Activity {
             if(tabIndex==1)showTab(1);
         });
     }
-    private void startSound(){
-        synchronized(audioGuard){
+    private void startSound(TextView status, Button toggle){
+        synchronized(audioGuard) {
             if(audioPlaying || !RUST_AVAILABLE)return;
             audioPlaying=true;
         }
         audioThread=new Thread(()->{
             AudioTrack track=null;
+            String error=null;
             try {
-                int rate=48000, min=AudioTrack.getMinBufferSize(rate,
+                int rate=48000;
+                int min=AudioTrack.getMinBufferSize(rate,
                     AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT);
-                if(min<=0)return;
+                if(min<=0)throw new IllegalStateException("PCM mono 48 kHz indisponível");
                 track=new AudioTrack(AudioManager.STREAM_MUSIC,rate,
                     AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT,
                     Math.max(min,4096),AudioTrack.MODE_STREAM);
-                if(track.getState()!=AudioTrack.STATE_INITIALIZED)return;
+                if(track.getState()!=AudioTrack.STATE_INITIALIZED)
+                    throw new IllegalStateException("Falha ao inicializar AudioTrack");
                 synchronized(audioGuard){audioTrack=track;}
-                track.play();short[] samples=new short[512];
+                track.play();
+                runOnUiThread(()->{
+                    if(tabIndex==2)status.setText("Reproduzindo sinal PCM do Rust...");
+                });
+                short[] samples=new short[512];
                 while(audioPlaying){
-                    int count=nativeGenerateAudio(samples,220,rate);
-                    if(count<=0)break;
+                    int count=nativeGenerateAudio(samples,toneFrequency,rate);
+                    if(count<=0)throw new IllegalStateException("Erro no sintetizador Rust "+count);
                     int written=track.write(samples,0,count);
-                    if(written<0)break;
+                    if(written<0)throw new IllegalStateException("AudioTrack.write retornou "+written);
                 }
-            }catch(Throwable ignored){
-            }finally{
+            }catch(Throwable e){error="Erro de áudio: "+String.valueOf(e.getMessage());}
+            finally {
                 audioPlaying=false;
-                if(track!=null){try{track.stop();}catch(Exception ignored){}
-                    track.release();}
+                if(track!=null) {
+                    try{track.pause();track.flush();}catch(Exception ignored){}
+                    track.release();
+                }
                 synchronized(audioGuard){if(audioTrack==track)audioTrack=null;}
+                final String result=error;
+                runOnUiThread(()->{
+                    if(tabIndex==2){
+                        toggle.setText("Tocar teste de áudio");
+                        status.setText(result==null?"Áudio parado":result);
+                    }
+                });
             }
         },"x360-rust-pcm");
         audioThread.start();

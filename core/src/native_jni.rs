@@ -11,9 +11,16 @@ pub extern "system" fn Java_com_x360nexus_MainActivity_nativeInspectXex(
     mut env:JNIEnv, _:JObject, data:JByteArray)->jstring {
     let msg = match env.convert_byte_array(data) {
         Ok(bytes) => match loader::inspect_xex(&bytes) {
-            Ok(info) => format!(
-                "XEX2 reconhecido.\nModulo: 0x{:08X}\nCabecalho: {} bytes\nSeguranca: 0x{:X}\nCabecalhos opcionais: {}\n\nDiagnostico somente: nao executa XEX comercial.",
-                info.module_flags, info.header_size, info.security_offset, info.optional_headers),
+            Ok(info) => match loader::inspect_xex_optionals(&bytes) {
+                Ok(items) => format!(
+                    "XEX2 reconhecido.\nFlags modulo: 0x{:08X}\nOffset dados PE: 0x{:X}\nInfo seguranca: 0x{:X}\nCabecalhos opcionais: {}\n\n{}\n\nDiagnostico apenas: imagem XEX comercial nao executavel.",
+                    info.module_flags, info.header_size, info.security_offset, info.optional_headers,
+                    items.iter().take(32)
+                        .map(|item| format!("0x{:08X} -> 0x{:08X}",item.key,item.value))
+                        .collect::<Vec<_>>().join("\n")
+                ),
+                Err(e) => format!("XEX2 reconhecido, tabela incompleta: {e}"),
+            },
             Err(e)=>format!("XEX: {e}"),
         },
         Err(e)=>format!("Nao foi possivel ler arquivo: {e}"),

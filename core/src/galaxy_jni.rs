@@ -14,8 +14,12 @@ fn output(mut env:JNIEnv,msg:String)->jstring{env.new_string(msg).map(|s|s.into_
   let boot = match loader::root_entries(&mut f, &i) {
     Ok(entries) => match loader::inspect_disc_default_xex(&mut f, &i, &entries) {
       Ok(Some(xex)) => format!(
-        "\n\nXEX2 PRINCIPAL ENCONTRADO\nArquivo: {}\nTamanho: {} bytes\nOffset: 0x{:X}\nCabecalho: {} bytes\nOpcoes: {}",
-        xex.name, xex.file_size, xex.file_offset, xex.xex.header_size, xex.xex.optional_headers
+        "\n\nXEX2 PRINCIPAL ENCONTRADO\nArquivo: {}\nTamanho: {} bytes\nOffset: 0x{:X}\nOffset dados PE: 0x{:X}\nInfo seguranca: 0x{:X}\nOpcoes: {}\n\nTabela opcional XEX2 (chave → valor):\n{}",
+        xex.name, xex.file_size, xex.file_offset,
+        xex.xex.header_size, xex.xex.security_offset, xex.xex.optional_headers,
+        xex.optionals.iter().take(24)
+          .map(|h|format!("0x{:08X} → 0x{:08X}",h.key,h.value))
+          .collect::<Vec<_>>().join("\n")
       ),
       Ok(None) => "\n\nNenhum default.xex encontrado na raiz".into(),
       Err(err) => format!("\n\nFalha no default.xex: {err}"),

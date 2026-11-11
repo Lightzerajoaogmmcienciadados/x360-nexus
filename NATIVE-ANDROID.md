@@ -1,4 +1,4 @@
-# X360 Nexus — Native Android Experimental (6.1)
+# X360 Nexus — Native Android Experimental (6.2)
 
 Native Android APK: Java/Android SDK, OpenGL ES 2, Android AudioTrack and Rust JNI (ARM64-v8a).
 
@@ -22,7 +22,7 @@ Xbox kernel services, XMA decoding and compatibility for Forza/Minecraft.
 
 ## Build
 
-GitHub Actions: `.github/workflows/x360-native-android-v61.yml`, branch `feature/x360-nexus-native-0.5`.
+GitHub Actions: `.github/workflows/x360-native-android-v62.yml`, branch `feature/x360-nexus-native-v6.2`.
 
 `cargo test --manifest-path core/Cargo.toml`
 
@@ -30,3 +30,10 @@ GitHub workflow builds `libx360nexus.so` using NDK for arm64-v8a,
 then `gradle :app:assembleDebug` and uploads a debug APK artifact.
 
 Use only game files that you are authorized to use.
+
+## 6.2 increments
+- XEX2 header optionals with bounded big-endian parsing, including inside ISO.
+- Experimental 4 KiB virtual memory mapping, R/W/X and overlap checks.
+- Additional PPC ops; tests include execution from virtual address 0x82000000.
+- Android native diagnostic improvements and a 100-800 Hz audio test slider.
+- Still NO decrypt/mapping/boot of retail Xbox 360 games.
