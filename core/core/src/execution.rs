@@ -52,7 +52,7 @@ impl ExecutionEngine {
                 break;
             }
 
-            self.cpu.step(&mut self.memory)?;
+            self.cpu.step(&self.memory)?;
             self.instructions_executed += 1;
             completed += 1;
         }
