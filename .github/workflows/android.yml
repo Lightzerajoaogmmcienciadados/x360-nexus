@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Project Xenon Galaxy
+    name: Build Project Xenon 4.1 Galaxy
     runs-on: ubuntu-latest
 
     steps:
@@ -39,15 +39,6 @@ jobs:
         with:
           targets: aarch64-linux-android
 
-      - name: Check Android SDK
-        shell: bash
-        run: |
-          set -e
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          test -d "$ANDROID_HOME"
-          test -d "$ANDROID_HOME/ndk"
-          ls "$ANDROID_HOME/ndk"
-
       - name: Test Rust core
         run: |
           cargo test --manifest-path core/Cargo.toml
@@ -56,6 +47,8 @@ jobs:
         shell: bash
         run: |
           set -e
+
+          rustup target add aarch64-linux-android
 
           NDK="$ANDROID_HOME/ndk"
           NDK_VERSION=$(ls "$NDK" | sort -V | tail -1)
