@@ -5,6 +5,7 @@ pub mod audio;
 pub mod cpu;
 pub mod gpu;
 pub mod gpu3d;
+pub mod gpu_advanced;
 pub mod input;
 pub mod kernel;
 pub mod loader;
@@ -18,7 +19,7 @@ use kernel::Kernel;
 use memory::Memory;
 
 use jni::objects::JObject;
-use jni::sys::{jint, jintArray, jlong, jfloat, jstring};
+use jni::sys::{jfloat, jint, jintArray, jlong, jstring};
 use jni::JNIEnv;
 
 pub const GPU_WIDTH: usize = 640;
@@ -71,12 +72,10 @@ impl Machine {
         for _ in 0..limit {
             self.step()?;
             executed += 1;
-
             if self.cpu.halted {
                 break;
             }
         }
-
         Ok(executed)
     }
 
@@ -115,7 +114,6 @@ impl Machine {
 
         machine.load_test_program(&program)
             .map_err(str::to_string)?;
-
         machine.run_steps(3)?;
 
         if machine.cpu.gpr[3] != 42
@@ -138,8 +136,19 @@ impl Machine {
             return Err("GPU 3D framebuffer failed".into());
         }
 
+        let advanced =
+            gpu_advanced::render_advanced_frame(
+                GPU_WIDTH, GPU_HEIGHT, 0.4, 0.3
+            ).map_err(str::to_string)?;
+
+        if advanced.len()
+            != GPU_WIDTH * GPU_HEIGHT * 4
+        {
+            return Err("GPU advanced framebuffer failed".into());
+        }
+
         Ok(format!(
-            "X360 NEXUS v0.7 - PROJECT XENON\n\
+            "X360 NEXUS v0.8 - PROJECT XENON\n\
              Rust JNI: OK\n\
              CPU PowerPC: OK\n\
              Memoria LWZ/STW: OK\n\
@@ -147,8 +156,11 @@ impl Machine {
              Kernel: {} ticks\n\
              GPU 2D: OK\n\
              GPU 3D: OK\n\
+             GPU avancada: OK\n\
              Z-buffer: disponivel\n\
              Resolucao: {}x{}\n\
+             Texturas: procedurais\n\
+             Iluminacao: experimental\n\
              Controles: Android virtual\n\
              Audio: experimental\n\
              Xenos real: nao implementado\n\
@@ -207,7 +219,6 @@ fn make_java_array(
 pub fn render_gpu_argb() -> Result<Vec<jint>, String> {
     let mut gpu = Gpu::new(GPU_WIDTH, GPU_HEIGHT)
         .map_err(str::to_string)?;
-
     gpu.render_test();
     Ok(rgba_to_argb(gpu.framebuffer()))
 }
@@ -219,7 +230,6 @@ pub fn render_dynamic_argb(
 ) -> Result<Vec<jint>, String> {
     let mut gpu = Gpu::new(GPU_WIDTH, GPU_HEIGHT)
         .map_err(str::to_string)?;
-
     gpu.render_scene(x, y, tick);
     Ok(rgba_to_argb(gpu.framebuffer()))
 }
@@ -233,10 +243,22 @@ pub fn render_3d_argb(
     }
 
     let rgba = gpu3d::render_cube_frame(
-        GPU_WIDTH,
-        GPU_HEIGHT,
-        yaw,
-        pitch,
+        GPU_WIDTH, GPU_HEIGHT, yaw, pitch
+    ).map_err(str::to_string)?;
+
+    Ok(rgba_to_argb(&rgba))
+}
+
+pub fn render_advanced_argb(
+    yaw: f32,
+    pitch: f32,
+) -> Result<Vec<jint>, String> {
+    if !yaw.is_finite() || !pitch.is_finite() {
+        return Err("Invalid camera angles".into());
+    }
+
+    let rgba = gpu_advanced::render_advanced_frame(
+        GPU_WIDTH, GPU_HEIGHT, yaw, pitch
     ).map_err(str::to_string)?;
 
     Ok(rgba_to_argb(&rgba))
@@ -325,6 +347,25 @@ Java_com_x360nexus_MainActivity_nativeGpu3DFrame(
     }
 }
 
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn
+Java_com_x360nexus_MainActivity_nativeGpuAdvancedFrame(
+    env: JNIEnv,
+    _object: JObject,
+    yaw: jfloat,
+    pitch: jfloat,
+) -> jintArray {
+    let result = std::panic::catch_unwind(|| {
+        render_advanced_argb(yaw, pitch)
+    });
+
+    match result {
+        Ok(Ok(pixels)) => make_java_array(&env, &pixels),
+        _ => std::ptr::null_mut(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,7 +374,7 @@ mod tests {
     fn machine_test() {
         let s = Machine::self_test().unwrap();
         assert!(s.contains("PowerPC: OK"));
-        assert!(s.contains("GPU 3D: OK"));
+        assert!(s.contains("GPU avancada: OK"));
     }
 
     #[test]
@@ -354,6 +395,22 @@ mod tests {
     #[test]
     fn gpu_3d_test() {
         let pixels = render_3d_argb(0.4, 0.3).unwrap();
+
+        assert_eq!(
+            pixels.len(),
+            GPU_WIDTH * GPU_HEIGHT
+        );
+
+        assert!(pixels.iter().any(
+            |p| (*p as u32) != 0xFF060D0C
+        ));
+    }
+
+    #[test]
+    fn gpu_advanced_test() {
+        let pixels = render_advanced_argb(
+            0.4, 0.3
+        ).unwrap();
 
         assert_eq!(
             pixels.len(),
