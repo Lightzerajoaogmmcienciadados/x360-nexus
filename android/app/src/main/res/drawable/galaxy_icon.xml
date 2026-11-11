@@ -1,46 +1,24 @@
 
-<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Fundo escuro -->
     <path
         android:fillColor="#07140D"
-        android:pathData="M0,0 H108 V108 H0 Z"/>
+        android:pathData="M0,0 L108,0 L108,108 L0,108 Z" />
 
-    <!-- Circulo verde -->
     <path
         android:fillColor="#18D65B"
-        android:pathData="M54,8
-            C79.4,8 100,28.6 100,54
-            C100,79.4 79.4,100 54,100
-            C28.6,100 8,79.4 8,54
-            C8,28.6 28.6,8 54,8 Z"/>
+        android:pathData="M54,8 C79.4,8 100,28.6 100,54 C100,79.4 79.4,100 54,100 C28.6,100 8,79.4 8,54 C8,28.6 28.6,8 54,8 Z" />
 
-    <!-- Centro escuro -->
     <path
         android:fillColor="#10251A"
-        android:pathData="M54,17
-            C74.4,17 91,33.6 91,54
-            C91,74.4 74.4,91 54,91
-            C33.6,91 17,74.4 17,54
-            C17,33.6 33.6,17 54,17 Z"/>
+        android:pathData="M54,17 C74.4,17 91,33.6 91,54 C91,74.4 74.4,91 54,91 C33.6,91 17,74.4 17,54 C17,33.6 33.6,17 54,17 Z" />
 
-    <!-- X estilizado -->
     <path
         android:fillColor="#66FF88"
-        android:pathData="M25,20
-            L54,43
-            L83,20
-            L69,42
-            L58,54
-            L84,87
-            L54,65
-            L24,87
-            L50,54
-            L39,42 Z"/>
+        android:pathData="M25,20 L54,43 L83,20 L69,42 L58,54 L84,87 L54,65 L24,87 L50,54 L39,42 Z" />
 
 </vector>
