@@ -8,9 +8,10 @@ pub struct ExecutionEngine {
     pub pc: u32,
     pub ticks: u64,
     pub halted: bool,
+    pub kernel_calls: u64,
 }
 impl ExecutionEngine {
-    pub fn new() -> Self { Self {memory:VirtualMemory::new(),registers:[0;32],pc:0,ticks:0,halted:false} }
+    pub fn new() -> Self { Self {memory:VirtualMemory::new(),registers:[0;32],pc:0,ticks:0,halted:false,kernel_calls:0} }
     pub fn load_homebrew(&mut self,base:u32,code:&[u8])->Result<(),String>{
         if code.is_empty() || code.len()>1024*1024 || code.len()%4!=0 || base as usize%PAGE_SIZE!=0 {return Err("invalid homebrew size/alignment".into())}
         let size=code.len().checked_add(PAGE_SIZE-1).ok_or("size overflow")? / PAGE_SIZE * PAGE_SIZE;
@@ -34,6 +35,19 @@ impl ExecutionEngine {
                 let imm=(instruction as u16 as i16 as i64) as u64;
                 let add=if op==15{imm.wrapping_shl(16)}else{imm};
                 self.registers[rt]=base.wrapping_add(add);
+            }
+            // sc: a private homebrew syscall ABI, not the Xbox 360 kernel ABI.
+            // r0=1: read virtual tick counter into r3.
+            // r0=2: read mapped page count into r3.
+            // r0=3: halt successfully (r3=0).
+            17 if instruction==0x44000002=>{
+                self.kernel_calls+=1;
+                match self.registers[0] {
+                    1=>self.registers[3]=self.ticks,
+                    2=>self.registers[3]=self.memory.mapped_pages() as u64,
+                    3=>{self.registers[3]=0;self.halted=true;},
+                    n=>return Err(format!("unsupported homebrew syscall {n}")),
+                }
             }
             24=>{self.registers[ra]=self.registers[rt] | (instruction as u16 as u64);}
             26=>{self.registers[ra]=self.registers[rt] ^ (instruction as u16 as u64);}
@@ -75,4 +89,24 @@ pub fn demo()->Result<String,String>{
     #[test]fn budget(){let mut vm=ExecutionEngine::new();vm.load_homebrew(0x1000,&[0x48,0,0,0]).unwrap();assert!(vm.run(5).unwrap_err().contains("budget"));}
     #[test]fn unsupported(){let mut vm=ExecutionEngine::new();vm.load_homebrew(0x1000,&[0xff,0xff,0xff,0xff]).unwrap();assert!(vm.step().is_err());}
     #[test]fn alignment(){let mut vm=ExecutionEngine::new();assert!(vm.load_homebrew(1,&[0,0,0,0]).is_err());}
+}
+
+/// Original homebrew: addi r0,0,2; sc (page count); addi r4,r3,41;
+/// addi r0,0,3; sc (stop). The code runs from mapped virtual memory.
+pub fn kernel_demo()->Result<String,String>{
+    let mut vm=ExecutionEngine::new();
+    let code=[0x38,0x00,0x00,0x02, 0x44,0x00,0x00,0x02,
+              0x38,0x83,0x00,0x29, 0x38,0x00,0x00,0x03,
+              0x44,0x00,0x00,0x02];
+    vm.load_homebrew(0x1000,&code)?;
+    let steps=vm.run(32)?;
+    if steps!=5 || vm.registers[4]!=42 || vm.kernel_calls!=2 || !vm.halted {
+        return Err("kernel homebrew self-test mismatch".into());
+    }
+    Ok(format!("Kernel Engine OK: {steps} steps, r4={}, syscalls={}, PC=0x{:X}",vm.registers[4],vm.kernel_calls,vm.pc))
+}
+#[cfg(test)] mod kernel_tests {
+    use super::*;
+    #[test] fn homebrew_syscalls(){assert!(kernel_demo().unwrap().contains("r4=42"));}
+    #[test] fn unknown_syscall(){let mut vm=ExecutionEngine::new();vm.load_homebrew(0x1000,&[0x44,0,0,2]).unwrap();assert!(vm.step().unwrap_err().contains("unsupported homebrew syscall"));}
 }

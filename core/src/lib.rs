@@ -35,3 +35,9 @@ pub extern "system" fn Java_com_x360nexus_MainActivity_nativeExecutionSelfTest(m
  let message=match std::panic::catch_unwind(execution_engine::demo){Ok(Ok(v))=>v,Ok(Err(e))=>format!("Execution Engine error: {e}"),Err(_)=>"Execution Engine internal error".into()};
  env.new_string(message).map(|v|v.into_raw()).unwrap_or(std::ptr::null_mut())
 }
+
+#[no_mangle]
+pub extern "system" fn Java_com_x360nexus_MainActivity_nativeKernelSelfTest(mut env:jni::JNIEnv,_:jni::objects::JObject)->jni::sys::jstring{
+ let message=match std::panic::catch_unwind(execution_engine::kernel_demo){Ok(Ok(v))=>v,Ok(Err(e))=>format!("Kernel Engine error: {e}"),Err(_)=>"Kernel Engine internal error".into()};
+ env.new_string(message).map(|v|v.into_raw()).unwrap_or(std::ptr::null_mut())
+}
