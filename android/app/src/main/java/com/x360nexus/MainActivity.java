@@ -7,6 +7,13 @@ import android.content.Intent;
 import android.content.Context;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.Bitmap;
+import android.widget.ImageView;
+import android.widget.Toast;
+import android.widget.Switch;
+import android.os.Vibrator;
+import android.os.VibrationEffect;
+import android.os.VibratorManager;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.provider.OpenableColumns;
@@ -33,6 +40,9 @@ import android.view.WindowInsets;
 import android.os.Build;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.io.File;
 import java.util.Locale;
 
 /**
@@ -42,6 +52,9 @@ import java.util.Locale;
  */
 public final class MainActivity extends Activity {
     private static final int PICK_GAME = 360;
+    private static final int PICK_COVER = 361;
+    private static final int PICK_COVERS = 362;
+    private String pendingCoverGameUri;
     private static final int BG = Color.rgb(6,15,11);
     private static final int PANEL = Color.rgb(15,35,25);
     private static final int BORDER = Color.rgb(40,78,53);
@@ -79,6 +92,23 @@ public final class MainActivity extends Activity {
     private AudioTrack audioTrack;
     private final Object audioGuard = new Object();
 
+    private void vibrate(int durationMs) {
+        if(!getPreferences(MODE_PRIVATE).getBoolean("vibration",true))return;
+        try {
+            Vibrator vib;
+            if(Build.VERSION.SDK_INT>=31) {
+                VibratorManager manager=(VibratorManager)getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
+                vib=manager==null?null:manager.getDefaultVibrator();
+            } else {
+                vib=(Vibrator)getSystemService(Context.VIBRATOR_SERVICE);
+            }
+            if(vib==null||!vib.hasVibrator())return;
+            long duration=Math.max(8,Math.min(80,durationMs));
+            if(Build.VERSION.SDK_INT>=26)
+                vib.vibrate(VibrationEffect.createOneShot(duration,VibrationEffect.DEFAULT_AMPLITUDE));
+            else vib.vibrate(duration);
+        } catch(RuntimeException ignored){}
+    }
     private int dp(float x) {return (int)(getResources().getDisplayMetrics().density*x+.5f);}
     private TextView text(String value,float size,int color,boolean bold) {
         TextView v=new TextView(this);
@@ -112,6 +142,10 @@ public final class MainActivity extends Activity {
         android.graphics.drawable.GradientDrawable bg=new android.graphics.drawable.GradientDrawable();
         bg.setColor(GREEN);bg.setCornerRadius(dp(12));
         b.setBackground(bg);b.setPadding(dp(10),dp(10),dp(10),dp(10));
+        b.setOnTouchListener((view,event)->{
+            if(event.getActionMasked()==MotionEvent.ACTION_DOWN)vibrate(12);
+            return false;
+        });
         return b;
     }
     private Button outlined(String label) {
@@ -248,34 +282,95 @@ public final class MainActivity extends Activity {
         });
     }
     private void library() {
-        heading("Biblioteca local","ISO: leitura XDVDFS e análise do default.xex. PPC bruto: execução isolada de diagnóstico. Jogos Xbox 360 ainda indisponíveis.");
-        LinearLayout pick=panel("IMPORTAR ISO / XEX / STFS / GOD / XBLA",
-            "Armazena URI e metadados localmente. Não envia o arquivo à internet.");
+        heading("Biblioteca de jogos",
+            "Capas offline para qualquer jogo de Xbox 360. Selecione uma imagem local por jogo ou importe várias imagens com nomes correspondentes.");
+        LinearLayout pick=panel("ISO / XEX / STFS / GOD / XBLA",
+            "Seus backups permanecem no celular. O aplicativo lê metadados, não inicia jogos comerciais.");
         add(content,pick,15);
-        Button b=button("+ Adicionar arquivo");add(pick,b,14);
-        b.setOnClickListener(v->{
+        Button importGame=button("+ Adicionar jogo ou arquivo");
+        add(pick,importGame,12);
+        importGame.setOnClickListener(v->{
             Intent open=new Intent(Intent.ACTION_OPEN_DOCUMENT);
-            open.addCategory(Intent.CATEGORY_OPENABLE);open.setType("*/*");
+            open.addCategory(Intent.CATEGORY_OPENABLE);
+            open.setType("*/*");
             open.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
             startActivityForResult(open,PICK_GAME);
         });
-        JSONArray all=loadLibrary();
-        add(content,text("Arquivos adicionados: "+all.length(),18,LIGHT,true),22);
-        if(all.length()==0){
-            LinearLayout empty=panel("Biblioteca vazia","Toque em + Adicionar arquivo para inspecionar seus backups.");
-            add(content,empty,12);
+
+        LinearLayout covers=panel("CAPAS DOS JOGOS",
+            "JPG, PNG ou WebP. Nomeie a imagem como o jogo ou como o Title ID (8 caracteres hexadecimais). O cache fica no app e funciona sem internet.");
+        add(content,covers,14);
+        Button bulk=outlined("Importar capas automaticamente");
+        add(covers,bulk,12);
+        bulk.setOnClickListener(v->chooseCovers());
+        add(covers,text("Exemplos: Forza Horizon.jpg • 4D530805.png",12,MUTED,false),9);
+
+        JSONArray games=loadLibrary();
+        add(content,text("Arquivos adicionados: "+games.length(),18,LIGHT,true),20);
+        if(games.length()==0){
+            add(content,panel("Biblioteca vazia",
+                "Adicione uma ISO ou XEX. A capa poderá ser selecionada depois; não é preciso alterar o jogo original."),12);
         }
-        for(int i=0;i<all.length();i++) {
-            final JSONObject item=all.optJSONObject(i);
+        for(int i=0;i<games.length();i++) {
+            JSONObject item=games.optJSONObject(i);
             if(item==null)continue;
             String name=item.optString("name","Arquivo");
             String uri=item.optString("uri","");
-            String scan=item.optString("scan","Não verificado");
+            String scan=item.optString("scan","Ainda não inspecionado");
             long bytes=item.optLong("size",-1);
-            LinearLayout card=panel(name,formatBytes(bytes)+"\n"+scan);
-            add(content,card,12);
-            Button remove=outlined("Remover da biblioteca");
-            add(card,remove,10);
+            String titleId=item.optString("titleId","");
+            if(titleId.isEmpty())titleId=titleIdFromScan(scan);
+            LinearLayout card=panel(null,null);
+            add(content,card,13);
+            LinearLayout summary=linear(true);
+            FrameLayout poster=new FrameLayout(this);
+            android.graphics.drawable.GradientDrawable posterBackground=
+                new android.graphics.drawable.GradientDrawable(
+                    android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                    new int[]{Color.rgb(22,77,46),Color.rgb(4,19,12)});
+            posterBackground.setCornerRadius(dp(12));
+            posterBackground.setStroke(dp(1),GREEN);
+            poster.setBackground(posterBackground);
+            File cachedCover=CoverStore.find(this,uri,name,titleId);
+            Bitmap coverBitmap=CoverStore.preview(cachedCover);
+            if(coverBitmap!=null){
+                ImageView photo=new ImageView(this);
+                photo.setImageBitmap(coverBitmap);
+                photo.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                photo.setContentDescription("Capa de "+name);
+                poster.addView(photo,new FrameLayout.LayoutParams(-1,-1));
+            } else {
+                TextView empty=text("X360\nNEXUS\n\nSEM CAPA",13,GREEN,true);
+                empty.setGravity(Gravity.CENTER);
+                empty.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+                poster.addView(empty,new FrameLayout.LayoutParams(-1,-1));
+            }
+            LinearLayout.LayoutParams posterParams=new LinearLayout.LayoutParams(dp(98),dp(139));
+            posterParams.rightMargin=dp(14);
+            summary.addView(poster,posterParams);
+            LinearLayout details=linear(false);
+            details.addView(text(name,18,LIGHT,true));
+            add(details,text(formatBytes(bytes),13,MUTED,false),8);
+            if(!titleId.isEmpty())add(details,text("Title ID: "+titleId,12,GREEN,false),8);
+            String shortScan=scan.split("\n",2)[0];
+            add(details,text(shortScan,12,MUTED,false),8);
+            summary.addView(details,new LinearLayout.LayoutParams(0,-2,1f));
+            add(card,summary,0);
+
+            Button choose=outlined(cachedCover==null?"Adicionar capa":"Trocar capa");
+            add(card,choose,13);
+            choose.setOnClickListener(v->chooseCoverForGame(uri));
+            TextView fullReport=text(scan,12,MUTED,false);
+            fullReport.setVisibility(View.GONE);
+            Button showReport=outlined("Ver detalhes técnicos");
+            add(card,showReport,10);
+            add(card,fullReport,9);
+            showReport.setOnClickListener(v->{
+                boolean opening=fullReport.getVisibility()!=View.VISIBLE;
+                fullReport.setVisibility(opening?View.VISIBLE:View.GONE);
+                showReport.setText(opening?"Ocultar detalhes":"Ver detalhes técnicos");
+                vibrate(12);
+            });
             if(name.toLowerCase(Locale.ROOT).endsWith(".ppcbin")
                 || name.toLowerCase(Locale.ROOT).endsWith(".nxpp")
                 || name.toLowerCase(Locale.ROOT).endsWith(".ppc")) {
@@ -283,18 +378,104 @@ public final class MainActivity extends Activity {
                 add(card,execute,10);
                 execute.setOnClickListener(v->runRawPpc(Uri.parse(uri),card));
             }
+            Button remove=outlined("Remover da biblioteca");
+            add(card,remove,10);
             remove.setOnClickListener(v->{
-                JSONArray arr=loadLibrary(),next=new JSONArray();
-                for(int k=0;k<arr.length();k++){
-                    JSONObject o=arr.optJSONObject(k);
-                    if(o!=null&&!uri.equals(o.optString("uri")))next.put(o);
+                JSONArray all=loadLibrary(),next=new JSONArray();
+                for(int k=0;k<all.length();k++){
+                    JSONObject entry=all.optJSONObject(k);
+                    if(entry!=null&&!uri.equals(entry.optString("uri")))next.put(entry);
                 }
-                saveLibrary(next);showTab(1);
+                saveLibrary(next);
+                CoverStore.removeGame(this,uri);
+                vibrate(24);
+                showTab(1);
             });
         }
-        LinearLayout note=panel("EXECUÇÃO DE JOGOS",
-            "Agora o carregador também lê o cabeçalho de default.xex dentro das ISOs XDVDFS. Isso ainda não implementa decriptação, mapeamento ou inicialização de jogos comerciais.");
-        add(content,note,14);
+        add(content,panel("EXECUÇÃO DOS JOGOS",
+            "O aplicativo detecta ISOs XGD2/XGD3, localiza default.xex, inspeciona XEX2 e Title ID. Capas são apenas imagens locais, não habilitam execução de jogos."),15);
+    }
+
+    private static String titleIdFromScan(String report) {
+        java.util.regex.Matcher m=java.util.regex.Pattern.compile(
+            "(?im)^Title ID:\\s*([0-9a-f]{8})\\s*$").matcher(report);
+        return m.find()?m.group(1).toUpperCase(Locale.ROOT):"";
+    }
+
+    private void chooseCoverForGame(String gameUri){
+        pendingCoverGameUri=gameUri;
+        Intent pick=new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        pick.addCategory(Intent.CATEGORY_OPENABLE);
+        pick.setType("image/*");
+        pick.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        startActivityForResult(pick,PICK_COVER);
+    }
+
+    private void chooseCovers(){
+        pendingCoverGameUri=null;
+        Intent pick=new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        pick.addCategory(Intent.CATEGORY_OPENABLE);
+        pick.setType("image/*");
+        pick.putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true);
+        pick.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        startActivityForResult(pick,PICK_COVERS);
+    }
+
+    private String displayName(Uri uri){
+        try(Cursor cursor=getContentResolver().query(uri,null,null,null,null)){
+            if(cursor!=null && cursor.moveToFirst()){
+                int index=cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if(index>=0&&!cursor.isNull(index))return cursor.getString(index);
+            }
+        }catch(Exception ignored){}
+        return uri.getLastPathSegment();
+    }
+
+    private void processCoverPicker(int request,Intent data){
+        final String selectedGame=pendingCoverGameUri;
+        pendingCoverGameUri=null;
+        final ArrayList<Uri> images=new ArrayList<>();
+        HashSet<String> seen=new HashSet<>();
+        if(data.getClipData()!=null){
+            for(int i=0;i<data.getClipData().getItemCount();i++){
+                Uri uri=data.getClipData().getItemAt(i).getUri();
+                if(uri!=null&&seen.add(uri.toString()))images.add(uri);
+            }
+        }
+        if(data.getData()!=null&&seen.add(data.getData().toString()))images.add(data.getData());
+        if(images.isEmpty())return;
+        vibrate(18);
+        new Thread(()->{
+            int saved=0;
+            String warning=null;
+            for(Uri uri:images){
+                try{
+                    String name=displayName(uri);
+                    if(!CoverStore.supportedName(name)){
+                        warning="Use arquivos JPG, PNG ou WebP";
+                        continue;
+                    }
+                    String key;
+                    if(request==PICK_COVER && selectedGame!=null)
+                        key=CoverStore.gameKey(selectedGame);
+                    else
+                        key=CoverStore.imageAlias(name);
+                    CoverStore.save(this,uri,key);
+                    saved++;
+                }catch(Throwable err){
+                    warning=String.valueOf(err.getMessage());
+                }
+            }
+            final int completed=saved;
+            final String problem=warning;
+            runOnUiThread(()->{
+                if(completed>0)vibrate(27);
+                String msg=completed+" capa(s) adicionada(s)";
+                if(problem!=null)msg+=" • "+problem;
+                Toast.makeText(this,msg,Toast.LENGTH_LONG).show();
+                if(tabIndex==1)showTab(1);
+            });
+        },"x360-offline-cover-cache").start();
     }
     /** Optional homebrew format: bare, big-endian, 4-byte PowerPC instructions. */
     private void runRawPpc(Uri file,LinearLayout card) {
@@ -378,12 +559,25 @@ public final class MainActivity extends Activity {
         });
         Button reset=outlined("Centralizar analógico");add(p,reset,14);
         reset.setOnClickListener(v->{axis.setProgress(100);if(RUST_AVAILABLE)nativeSetAxis(0,0);refreshPad();});
+        LinearLayout haptics=panel("VIBRAÇÃO / HAPTICS","Feedback tátil nos botões virtuais e nas ações da biblioteca. Usa o motor de vibração do Android.");
+        add(content,haptics,14);
+        Switch toggleVibe=new Switch(this);
+        toggleVibe.setText("Ativar vibração");
+        toggleVibe.setTextColor(LIGHT);
+        toggleVibe.setTextSize(15);
+        toggleVibe.setChecked(getPreferences(MODE_PRIVATE).getBoolean("vibration",true));
+        add(haptics,toggleVibe,12);
+        toggleVibe.setOnCheckedChangeListener((buttonView,isChecked)->{
+            getPreferences(MODE_PRIVATE).edit().putBoolean("vibration",isChecked).apply();
+            if(isChecked)vibrate(28);
+        });
         status("Gamepad físico","Android KeyEvent + MotionEvent reconhecem os botões e eixos; a tradução completa XInput do console ainda não existe.");
     }
     private void refreshPad() {
         if(padStatus!=null && tabIndex==3 && RUST_AVAILABLE)padStatus.setText(nativePadStatus());
     }
     private void press(int mask,boolean pressed) {
+        if(pressed)vibrate(15);
         if(!RUST_AVAILABLE)return;
         nativeSetButton(mask,pressed);refreshPad();
     }
@@ -432,7 +626,12 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onActivityResult(int request,int result,Intent data){
         super.onActivityResult(request,result,data);
-        if(request!=PICK_GAME || result!=RESULT_OK||data==null||data.getData()==null)return;
+        if(result!=RESULT_OK||data==null)return;
+        if(request==PICK_COVER||request==PICK_COVERS){
+            processCoverPicker(request,data);
+            return;
+        }
+        if(request!=PICK_GAME||data.getData()==null)return;
         Uri uri=data.getData();
         try{
             getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);
@@ -495,12 +694,16 @@ public final class MainActivity extends Activity {
             }
         }catch(Throwable e){result="Falha ao inspecionar: "+e.getMessage();}
         final String finalResult=result;
+        final String extractedTitleId=titleIdFromScan(result);
         runOnUiThread(()->{
             JSONArray lib=loadLibrary();
             for(int i=0;i<lib.length();i++){
                 JSONObject item=lib.optJSONObject(i);
                 if(item!=null&&key.equals(item.optString("uri"))){
-                    try{item.put("scan",finalResult);}catch(Exception ignored){}
+                    try{
+                        item.put("scan",finalResult);
+                        if(!extractedTitleId.isEmpty())item.put("titleId",extractedTitleId);
+                    }catch(Exception ignored){}
                 }
             }
             saveLibrary(lib);

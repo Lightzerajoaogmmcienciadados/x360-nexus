@@ -1,4 +1,4 @@
-# X360 Nexus — Native Android Experimental (6.2)
+# X360 Nexus — Native Android Experimental (6.3)
 
 Native Android APK: Java/Android SDK, OpenGL ES 2, Android AudioTrack and Rust JNI (ARM64-v8a).
 
@@ -22,7 +22,7 @@ Xbox kernel services, XMA decoding and compatibility for Forza/Minecraft.
 
 ## Build
 
-GitHub Actions: `.github/workflows/x360-native-android-v62.yml`, branch `feature/x360-nexus-native-v6.2`.
+GitHub Actions: `.github/workflows/x360-native-android-v63.yml`, branch `feature/x360-nexus-native-v6.3`.
 
 `cargo test --manifest-path core/Cargo.toml`
 
@@ -37,3 +37,14 @@ Use only game files that you are authorized to use.
 - Additional PPC ops; tests include execution from virtual address 0x82000000.
 - Android native diagnostic improvements and a 100-800 Hz audio test slider.
 - Still NO decrypt/mapping/boot of retail Xbox 360 games.
+
+## Version 6.3: Offline cover gallery and haptics
+
+- Native Android cover cards, miniatures and collapsible technical reports.
+- One-tap assignment of local JPG, PNG or WebP cover to each imported game.
+- Multi-selection cover import matches **normalized game filenames** or **Title ID**, which is parsed from a bounded XEX2 optional execution-info record (key 0x00040006).
+- Persisted on-device internal JPEG thumbnail cache, including aliases for games imported later.
+- Fallback Xbox-inspired placeholder if no user-provided cover exists.
+- Optional haptic vibration for native buttons, gamepad touch presses and library actions (Android VIBRATE permission), toggle in Controls.
+- Not an online cover browser: no official game art bundled, fetched or rehosted. Users supply their own artwork images.
+- Cover support applies to any cataloged title, not a claim of automatic identification of every official release.

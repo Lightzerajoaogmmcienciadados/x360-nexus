@@ -13,8 +13,10 @@ pub extern "system" fn Java_com_x360nexus_MainActivity_nativeInspectXex(
         Ok(bytes) => match loader::inspect_xex(&bytes) {
             Ok(info) => match loader::inspect_xex_optionals(&bytes) {
                 Ok(items) => format!(
-                    "XEX2 reconhecido.\nFlags modulo: 0x{:08X}\nOffset dados PE: 0x{:X}\nInfo seguranca: 0x{:X}\nCabecalhos opcionais: {}\n\n{}\n\nDiagnostico apenas: imagem XEX comercial nao executavel.",
-                    info.module_flags, info.header_size, info.security_offset, info.optional_headers,
+                    "XEX2 reconhecido.\nFlags modulo: 0x{:08X}\nOffset dados PE: 0x{:X}\nInfo seguranca: 0x{:X}\nTitle ID: {}\nCabecalhos opcionais: {}\n\n{}\n\nDiagnostico apenas: imagem XEX comercial nao executavel.",
+                    info.module_flags, info.header_size, info.security_offset,
+                    loader::inspect_xex_title_id(&bytes).map(|id|format!("{id:08X}")).unwrap_or_else(||"indisponivel".into()),
+                    info.optional_headers,
                     items.iter().take(32)
                         .map(|item| format!("0x{:08X} -> 0x{:08X}",item.key,item.value))
                         .collect::<Vec<_>>().join("\n")

@@ -50,6 +50,18 @@ pub struct XexOptionalHeader {
     pub value:u32,
 }
 /// Only decodes the raw optional-header table, not encrypted image data.
+/// Extracts Xbox 360 Title ID from optional XEX execution-info metadata (0x00040006).
+/// This is an 8-character hexadecimal identifier, not evidence of runtime compatibility.
+pub fn inspect_xex_title_id(data:&[u8])->Option<u32> {
+    let options=inspect_xex_optionals(data).ok()?;
+    let execution=options.iter().find(|option|option.key==0x0004_0006)?;
+    let offset=usize::try_from(execution.value).ok()?;
+    let start=offset.checked_add(12)?;
+    let end=start.checked_add(4)?;
+    let bytes=data.get(start..end)?;
+    let id=u32::from_be_bytes(bytes.try_into().ok()?);
+    if id==0 {None} else {Some(id)}
+}
 pub fn inspect_xex_optionals(data:&[u8])->Result<Vec<XexOptionalHeader>,String>{
     let header=inspect_xex(data)?;
     if header.optional_headers>1024 {
@@ -93,6 +105,7 @@ pub struct DiscXexInfo {
     pub file_offset: u64,
     pub xex: XexInfo,
     pub optionals: Vec<XexOptionalHeader>,
+    pub title_id: Option<u32>,
 }
 
 /// Scans the already validated root directory for default.xex, then reads a
@@ -127,12 +140,14 @@ pub fn inspect_disc_default_xex<R: Read + Seek>(
     reader.read_exact(&mut header).map_err(|e|e.to_string())?;
     let xex = inspect_xex(&header)?;
     let optionals = inspect_xex_optionals(&header)?;
+    let title_id=inspect_xex_title_id(&header);
     Ok(Some(DiscXexInfo {
         name: entry.name.clone(),
         file_size: entry.size,
         file_offset: offset,
         xex,
         optionals,
+        title_id,
     }))
 }
 
@@ -206,5 +221,24 @@ mod disc_boot_tests {
         let mut xex=vec![0u8;24];xex[0..4].copy_from_slice(b"XEX2");
         xex[20..24].copy_from_slice(&1u32.to_be_bytes());
         assert!(inspect_xex_optionals(&xex).is_err());
+    }
+}
+
+#[cfg(test)]mod title_id_tests{
+    use super::*;
+    #[test]fn can_read_execution_title_id(){
+        let mut b=vec![0u8;128];b[..4].copy_from_slice(b"XEX2");
+        b[20..24].copy_from_slice(&1u32.to_be_bytes());
+        b[24..28].copy_from_slice(&0x00040006u32.to_be_bytes());
+        b[28..32].copy_from_slice(&64u32.to_be_bytes());
+        b[76..80].copy_from_slice(&0x4d530805u32.to_be_bytes());
+        assert_eq!(inspect_xex_title_id(&b),Some(0x4d530805));
+    }
+    #[test]fn truncated_title_id_does_not_panic(){
+        let mut b=vec![0u8;32];b[..4].copy_from_slice(b"XEX2");
+        b[20..24].copy_from_slice(&1u32.to_be_bytes());
+        b[24..28].copy_from_slice(&0x00040006u32.to_be_bytes());
+        b[28..32].copy_from_slice(&100u32.to_be_bytes());
+        assert_eq!(inspect_xex_title_id(&b),None);
     }
 }
