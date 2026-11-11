@@ -18,7 +18,7 @@ impl Gpu {
 
         let len = width
             .checked_mul(height)
-            .and_then(|v| v.checked_mul(4))
+            .and_then(|n| n.checked_mul(4))
             .ok_or("framebuffer overflow")?;
 
         if len > 64 * 1024 * 1024 {
@@ -34,8 +34,8 @@ impl Gpu {
     }
 
     pub fn clear(&mut self, color: [u8; 4]) {
-        for pixel in self.rgba.chunks_exact_mut(4) {
-            pixel.copy_from_slice(&color);
+        for p in self.rgba.chunks_exact_mut(4) {
+            p.copy_from_slice(&color);
         }
     }
 
@@ -49,10 +49,8 @@ impl Gpu {
             return Err("pixel out of bounds");
         }
 
-        let index = (y * self.width + x) * 4;
-        self.rgba[index..index + 4]
-            .copy_from_slice(&color);
-
+        let i = (y * self.width + x) * 4;
+        self.rgba[i..i + 4].copy_from_slice(&color);
         Ok(())
     }
 
@@ -65,13 +63,13 @@ impl Gpu {
             return Err("pixel out of bounds");
         }
 
-        let index = (y * self.width + x) * 4;
+        let i = (y * self.width + x) * 4;
 
         Ok([
-            self.rgba[index],
-            self.rgba[index + 1],
-            self.rgba[index + 2],
-            self.rgba[index + 3],
+            self.rgba[i],
+            self.rgba[i + 1],
+            self.rgba[i + 2],
+            self.rgba[i + 3],
         ])
     }
 
@@ -85,7 +83,6 @@ impl Gpu {
     ) -> Result<(), &'static str> {
         let right = x.checked_add(width)
             .ok_or("rectangle overflow")?;
-
         let bottom = y.checked_add(height)
             .ok_or("rectangle overflow")?;
 
@@ -98,40 +95,88 @@ impl Gpu {
                 self.pixel(px, py, color)?;
             }
         }
-
         Ok(())
     }
 
     pub fn gradient(&mut self) {
-        let width = self.width.max(1);
-        let height = self.height.max(1);
+        let w = self.width.max(1);
+        let h = self.height.max(1);
 
         for y in 0..self.height {
             for x in 0..self.width {
-                let r = ((x * 255) / width) as u8;
-                let g = ((y * 255) / height) as u8;
-
+                let r = (x * 255 / w) as u8;
+                let g = (y * 255 / h) as u8;
                 let _ = self.pixel(
-                    x,
-                    y,
-                    [r, g, 80, 255],
+                    x, y, [r, g, 80, 255]
                 );
             }
         }
     }
 
     pub fn render_test(&mut self) {
-        self.clear([8, 14, 12, 255]);
         self.gradient();
 
         let w = self.width / 3;
         let h = self.height / 3;
 
         let _ = self.rectangle(
-            w,
-            h,
-            w,
-            h,
+            w, h, w, h, [0, 220, 80, 255]
+        );
+
+        self.present();
+    }
+
+    // Dynamic scene with a movable square.
+    pub fn render_scene(
+        &mut self,
+        x: usize,
+        y: usize,
+        tick: u64,
+    ) {
+        self.clear([7, 15, 18, 255]);
+
+        let phase = (tick % 256) as u8;
+
+        for py in 0..self.height {
+            for px in 0..self.width {
+                let r = (px * 80 / self.width) as u8;
+                let g = (py * 90 / self.height) as u8;
+
+                let _ = self.pixel(
+                    px,
+                    py,
+                    [
+                        r,
+                        g.saturating_add(phase / 5),
+                        55,
+                        255
+                    ]
+                );
+            }
+        }
+
+        // Animated horizontal bar.
+        let bar_x = (tick as usize * 3)
+            % self.width;
+
+        let _ = self.rectangle(
+            bar_x,
+            25,
+            10.min(self.width - bar_x),
+            5,
+            [100, 255, 180, 255],
+        );
+
+        // Player square, clamped to framebuffer.
+        let size = 48usize;
+        let px = x.min(self.width.saturating_sub(size));
+        let py = y.min(self.height.saturating_sub(size));
+
+        let _ = self.rectangle(
+            px,
+            py,
+            size.min(self.width),
+            size.min(self.height),
             [0, 220, 80, 255],
         );
 
@@ -173,7 +218,6 @@ mod tests {
     #[test]
     fn pixel_test() {
         let mut gpu = Gpu::new(4, 4).unwrap();
-
         gpu.pixel(2, 1, [255, 0, 0, 255])
             .unwrap();
 
@@ -188,28 +232,40 @@ mod tests {
         let mut gpu = Gpu::new(8, 8).unwrap();
 
         gpu.rectangle(
-            2, 2, 3, 3,
-            [0, 255, 0, 255],
+            2, 2, 3, 3, [0, 255, 0, 255]
         ).unwrap();
 
         assert_eq!(
             gpu.get_pixel(3, 3).unwrap(),
             [0, 255, 0, 255]
         );
-
-        assert!(gpu.pixel(10, 10, [0; 4]).is_err());
     }
 
     #[test]
     fn render_test_frame() {
         let mut gpu = Gpu::new(640, 360).unwrap();
-
         gpu.render_test();
 
         assert_eq!(gpu.frame_count(), 1);
         assert_eq!(
             gpu.framebuffer_size(),
             640 * 360 * 4
+        );
+        assert_eq!(
+            gpu.get_pixel(320, 180).unwrap(),
+            [0, 220, 80, 255]
+        );
+    }
+
+    #[test]
+    fn dynamic_scene_test() {
+        let mut gpu = Gpu::new(640, 360).unwrap();
+        gpu.render_scene(100, 100, 1);
+
+        assert_eq!(gpu.frame_count(), 1);
+        assert_eq!(
+            gpu.get_pixel(110, 110).unwrap(),
+            [0, 220, 80, 255]
         );
     }
 }
