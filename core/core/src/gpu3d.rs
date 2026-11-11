@@ -1,4 +1,3 @@
-
 use crate::gpu::Gpu;
 
 #[derive(Clone, Copy)]
