@@ -24,6 +24,9 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.EditText;
+import android.text.TextWatcher;
+import android.text.Editable;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -73,6 +76,8 @@ public final class MainActivity extends Activity {
 
     private native String nativeSelfTest();
     private native String nativeRunDemo();
+    private native int[] nativeGpuLabFrame(int mode);
+    private native String nativeGpuLabReport(int mode);
     private native String nativeInspectIso(int fileDescriptor);
     private native String nativeInspectXex(byte[] bytes);
     private native String nativeExecuteRawPpc(byte[] bytes);
@@ -93,21 +98,7 @@ public final class MainActivity extends Activity {
     private final Object audioGuard = new Object();
 
     private void vibrate(int durationMs) {
-        if(!getPreferences(MODE_PRIVATE).getBoolean("vibration",true))return;
-        try {
-            Vibrator vib;
-            if(Build.VERSION.SDK_INT>=31) {
-                VibratorManager manager=(VibratorManager)getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
-                vib=manager==null?null:manager.getDefaultVibrator();
-            } else {
-                vib=(Vibrator)getSystemService(Context.VIBRATOR_SERVICE);
-            }
-            if(vib==null||!vib.hasVibrator())return;
-            long duration=Math.max(8,Math.min(80,durationMs));
-            if(Build.VERSION.SDK_INT>=26)
-                vib.vibrate(VibrationEffect.createOneShot(duration,VibrationEffect.DEFAULT_AMPLITUDE));
-            else vib.vibrate(duration);
-        } catch(RuntimeException ignored){}
+        Haptics.pulse(this,shell,durationMs,false);
     }
     private int dp(float x) {return (int)(getResources().getDisplayMetrics().density*x+.5f);}
     private TextView text(String value,float size,int color,boolean bold) {
@@ -143,7 +134,7 @@ public final class MainActivity extends Activity {
         bg.setColor(GREEN);bg.setCornerRadius(dp(12));
         b.setBackground(bg);b.setPadding(dp(10),dp(10),dp(10),dp(10));
         b.setOnTouchListener((view,event)->{
-            if(event.getActionMasked()==MotionEvent.ACTION_DOWN)vibrate(12);
+            if(event.getActionMasked()==MotionEvent.ACTION_DOWN)Haptics.pulse(this,b,50,false);
             return false;
         });
         return b;
@@ -248,6 +239,29 @@ public final class MainActivity extends Activity {
             "Instruções: addi/addis, mulli, subfic, OR/AND/XOR, comparações, load/store, branches, LR/CTR e extensões.\nAinda faltam MMU, VMX128, SMT, JIT e grande parte da ISA.");
         status("Kernel e memória","Memória big-endian, regiões virtuais de 4 KiB com permissões R/W/X e threads experimentais. Não é uma MMU Xbox 360.");
         status("GPU","Framebuffer RGBA em Rust + cena OpenGL ES 2.0 no Android. Sem tradução de shaders ou comandos Xenos.");
+        LinearLayout xenos=panel("XENOS LAB — GPU EXPERIMENTAL",
+            "Pipeline de comandos original em Rust: triângulos, recorte (scissor), texturas procedurais e alpha blending. Não interpreta comandos da GPU Xenos real.");
+        add(content,xenos,12);
+        ImageView gpuPreview=new ImageView(this);
+        gpuPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        gpuPreview.setBackgroundColor(Color.rgb(3,10,7));
+        LinearLayout.LayoutParams previewParams=new LinearLayout.LayoutParams(-1,dp(192));
+        previewParams.topMargin=dp(12);
+        xenos.addView(gpuPreview,previewParams);
+        TextView gpuInfo=text("Selecione uma cena para testar o pipeline de desenho.",12,MUTED,false);
+        add(xenos,gpuInfo,8);
+        LinearLayout gpuModes=linear(true);
+        String[] labels={"Pista","Triângulos","Texturas"};
+        for(int mode=0;mode<3;mode++){
+            final int selectedMode=mode;
+            Button option=outlined(labels[mode]);
+            LinearLayout.LayoutParams op=new LinearLayout.LayoutParams(0,dp(55),1f);
+            op.setMargins(dp(2),0,dp(2),0);
+            gpuModes.addView(option,op);
+            option.setOnClickListener(v->renderGpuLab(selectedMode,gpuPreview,gpuInfo));
+        }
+        add(xenos,gpuModes,12);
+        if(RUST_AVAILABLE)renderGpuLab(0,gpuPreview,gpuInfo);
         status("Análise XEX2","Leitura da tabela opcional (chave e valor) e localização do Default.xex dentro da ISO. O módulo comercial não é iniciado.");
         LinearLayout audio=panel("ÁUDIO NATIVO","Aperte para ouvir um sinal de diagnóstico sintetizado pelo núcleo Rust.");
         add(content,audio,12);
@@ -281,6 +295,29 @@ public final class MainActivity extends Activity {
             try{out.setText(nativeSelfTest());}catch(Throwable e){out.setText("Erro JNI: "+e);}
         });
     }
+    private void renderGpuLab(int mode,ImageView target,TextView report){
+        if(!RUST_AVAILABLE){report.setText("Núcleo Rust indisponível.");return;}
+        try{
+            int[] data=nativeGpuLabFrame(mode);
+            if(data==null||data.length!=320*180)throw new IllegalStateException("Buffer GPU inválido");
+            Bitmap bitmap=Bitmap.createBitmap(data,320,180,Bitmap.Config.ARGB_8888);
+            target.setImageBitmap(bitmap);
+            report.setText(nativeGpuLabReport(mode));
+        }catch(Throwable ex){
+            report.setText("Erro no GPU LAB: "+ex.getMessage());
+        }
+    }
+
+    private void applyLibraryFilter(ArrayList<View> views,ArrayList<String> names,
+        ArrayList<Boolean> favorites,String search,boolean onlyFavorites){
+        String query=search==null?"":search.toLowerCase(Locale.ROOT).trim();
+        for(int k=0;k<views.size();k++){
+            boolean found=names.get(k).contains(query);
+            boolean favorite=favorites.get(k);
+            views.get(k).setVisibility((found && (!onlyFavorites||favorite))?View.VISIBLE:View.GONE);
+        }
+    }
+
     private void library() {
         heading("Biblioteca de jogos",
             "Capas offline para qualquer jogo de Xbox 360. Selecione uma imagem local por jogo ou importe várias imagens com nomes correspondentes.");
@@ -305,15 +342,46 @@ public final class MainActivity extends Activity {
         bulk.setOnClickListener(v->chooseCovers());
         add(covers,text("Exemplos: Forza Horizon.jpg • 4D530805.png",12,MUTED,false),9);
 
+        LinearLayout organizer=panel("ORGANIZAR JOGOS",
+            "Pesquise por nome, organize o catálogo e marque seus favoritos.");
+        add(content,organizer,14);
+        EditText search=new EditText(this);
+        search.setSingleLine(true);
+        search.setHint("Pesquisar jogo...");
+        search.setTextColor(LIGHT);
+        search.setHintTextColor(MUTED);
+        search.setTextSize(15);
+        add(organizer,search,6);
+        Switch onlyFav=new Switch(this);
+        onlyFav.setText("Mostrar somente favoritos");
+        onlyFav.setTextColor(LIGHT);
+        onlyFav.setTextSize(14);
+        add(organizer,onlyFav,8);
+        boolean nameSort=getPreferences(MODE_PRIVATE).getBoolean("sortByName",false);
+        Button sortBtn=outlined(nameSort?"Ordenação: nome A–Z":"Ordenação: adição");
+        add(organizer,sortBtn,9);
+        sortBtn.setOnClickListener(v->{
+            getPreferences(MODE_PRIVATE).edit().putBoolean("sortByName",!nameSort).apply();
+            showTab(1);
+        });
+
         JSONArray games=loadLibrary();
+        ArrayList<JSONObject> listing=new ArrayList<>();
+        for(int i=0;i<games.length();i++){
+            JSONObject item=games.optJSONObject(i);
+            if(item!=null)listing.add(item);
+        }
+        if(nameSort)listing.sort((a,b)->a.optString("name","")
+            .compareToIgnoreCase(b.optString("name","")));
+        ArrayList<View> cardViews=new ArrayList<>();
+        ArrayList<String> cardNames=new ArrayList<>();
+        ArrayList<Boolean> cardFavorites=new ArrayList<>();
         add(content,text("Arquivos adicionados: "+games.length(),18,LIGHT,true),20);
         if(games.length()==0){
             add(content,panel("Biblioteca vazia",
                 "Adicione uma ISO ou XEX. A capa poderá ser selecionada depois; não é preciso alterar o jogo original."),12);
         }
-        for(int i=0;i<games.length();i++) {
-            JSONObject item=games.optJSONObject(i);
-            if(item==null)continue;
+        for(JSONObject item:listing) {
             String name=item.optString("name","Arquivo");
             String uri=item.optString("uri","");
             String scan=item.optString("scan","Ainda não inspecionado");
@@ -322,6 +390,10 @@ public final class MainActivity extends Activity {
             if(titleId.isEmpty())titleId=titleIdFromScan(scan);
             LinearLayout card=panel(null,null);
             add(content,card,13);
+            cardViews.add(card);
+            cardNames.add(name.toLowerCase(Locale.ROOT));
+            cardFavorites.add(item.optBoolean("favorite",false));
+            final int cardIndex=cardViews.size()-1;
             LinearLayout summary=linear(true);
             FrameLayout poster=new FrameLayout(this);
             android.graphics.drawable.GradientDrawable posterBackground=
@@ -360,6 +432,24 @@ public final class MainActivity extends Activity {
             Button choose=outlined(cachedCover==null?"Adicionar capa":"Trocar capa");
             add(card,choose,13);
             choose.setOnClickListener(v->chooseCoverForGame(uri));
+            Button favorite=outlined(item.optBoolean("favorite",false)
+                ?"★ Favorito — desmarcar":"☆ Adicionar aos favoritos");
+            add(card,favorite,10);
+            favorite.setOnClickListener(v->{
+                boolean newValue=!cardFavorites.get(cardIndex);
+                cardFavorites.set(cardIndex,newValue);
+                JSONArray library=loadLibrary();
+                for(int k=0;k<library.length();k++){
+                    JSONObject entry=library.optJSONObject(k);
+                    if(entry!=null && uri.equals(entry.optString("uri"))){
+                        try{entry.put("favorite",newValue);}catch(Exception ignored){}
+                    }
+                }
+                saveLibrary(library);
+                favorite.setText(newValue?"★ Favorito — desmarcar":"☆ Adicionar aos favoritos");
+                applyLibraryFilter(cardViews,cardNames,cardFavorites,
+                    search.getText().toString(),onlyFav.isChecked());
+            });
             TextView fullReport=text(scan,12,MUTED,false);
             fullReport.setVisibility(View.GONE);
             Button showReport=outlined("Ver detalhes técnicos");
@@ -392,6 +482,16 @@ public final class MainActivity extends Activity {
                 showTab(1);
             });
         }
+        search.addTextChangedListener(new TextWatcher(){
+            @Override public void beforeTextChanged(CharSequence s,int start,int count,int after){}
+            @Override public void onTextChanged(CharSequence s,int start,int before,int count){
+                applyLibraryFilter(cardViews,cardNames,cardFavorites,s.toString(),onlyFav.isChecked());
+            }
+            @Override public void afterTextChanged(Editable e){}
+        });
+        onlyFav.setOnCheckedChangeListener((b,checked)->{
+            applyLibraryFilter(cardViews,cardNames,cardFavorites,search.getText().toString(),checked);
+        });
         add(content,panel("EXECUÇÃO DOS JOGOS",
             "O aplicativo detecta ISOs XGD2/XGD3, localiza default.xex, inspeciona XEX2 e Title ID. Capas são apenas imagens locais, não habilitam execução de jogos."),15);
     }
@@ -567,10 +667,38 @@ public final class MainActivity extends Activity {
         toggleVibe.setTextSize(15);
         toggleVibe.setChecked(getPreferences(MODE_PRIVATE).getBoolean("vibration",true));
         add(haptics,toggleVibe,12);
+        TextView hapticInfo=text(Haptics.diagnostic(this),12,MUTED,false);
+        add(haptics,hapticInfo,12);
         toggleVibe.setOnCheckedChangeListener((buttonView,isChecked)->{
             getPreferences(MODE_PRIVATE).edit().putBoolean("vibration",isChecked).apply();
-            if(isChecked)vibrate(28);
+            if(isChecked)Haptics.pulse(this,toggleVibe,120,false);
+            hapticInfo.setText(Haptics.diagnostic(this));
         });
+        TextView intensity=text("Intensidade: "+Haptics.strength(this)+"%",13,LIGHT,false);
+        add(haptics,intensity,12);
+        SeekBar strength=new SeekBar(this);
+        strength.setMax(90);
+        strength.setProgress(Math.max(0,Math.min(90,Haptics.strength(this)-10)));
+        add(haptics,strength,6);
+        strength.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            @Override public void onProgressChanged(SeekBar bar,int progress,boolean fromUser){
+                if(!fromUser)return;
+                int requested=progress+10;
+                getPreferences(MODE_PRIVATE).edit().putInt("hapticStrength",requested).apply();
+                intensity.setText("Intensidade: "+requested+"%");
+            }
+            @Override public void onStartTrackingTouch(SeekBar bar){}
+            @Override public void onStopTrackingTouch(SeekBar bar){}
+        });
+        Button testVibe=button("Testar motor de vibração (2 pulsos)");
+        add(haptics,testVibe,12);
+        testVibe.setOnClickListener(v->{
+            String result=Haptics.pulse(this,testVibe,200,true);
+            hapticInfo.setText(Haptics.diagnostic(this)+"\n\nTeste: "+result);
+        });
+        Button refreshHaptic=outlined("Atualizar diagnóstico da vibração");
+        add(haptics,refreshHaptic,10);
+        refreshHaptic.setOnClickListener(v->hapticInfo.setText(Haptics.diagnostic(this)));
         status("Gamepad físico","Android KeyEvent + MotionEvent reconhecem os botões e eixos; a tradução completa XInput do console ainda não existe.");
     }
     private void refreshPad() {
@@ -618,9 +746,9 @@ public final class MainActivity extends Activity {
         return super.onGenericMotionEvent(event);
     }
     private void about() {
-        heading("Sobre o X360 Nexus","Build Android 6.2 • Experimental nativo");
+        heading("Sobre o X360 Nexus","Build Android 6.4 • Experimental nativo");
         status("ARQUITETURA","Android SDK + OpenGL ES 2.0 + AudioTrack + Rust JNI aarch64.");
-        status("SUPORTE ATUAL","ISO/XDVDFS e default.xex, tabela opcional XEX2, memória virtual experimental R/W/X, mais operações PPC, biblioteca local, controles Android, GPU diagnóstica e áudio PCM com frequência ajustável.");
+        status("SUPORTE ATUAL","Leitura XDVDFS/XEX2 e Title ID, CPU PowerPC limitada, memória virtual experimental, Xenos LAB com rasterização de triângulos e comandos gráficos próprios, GPU OpenGL ES, áudio PCM, capas, busca, favoritos e teste de vibração Android.");
         status("LIMITAÇÕES IMPORTANTES","Sem JIT PPC, MMU Xbox completa, APIs XAM/Xbox Kernel, decodificador XMA, tradutor Xenos, renderização 360 e execução de jogos comerciais.");
         status("PRIVACIDADE","Arquivos escolhidos permanecem no aparelho. A biblioteca guarda URIs locais, nomes, tamanhos e resultados de inspeção.");
     }

@@ -3,6 +3,8 @@
 pub mod audio;
 pub mod cpu;
 pub mod gpu;
+pub mod xenos_lab;
+mod xenos_lab_jni;
 pub mod input;
 pub mod kernel;
 pub mod loader;

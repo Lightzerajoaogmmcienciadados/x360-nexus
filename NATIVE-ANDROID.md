@@ -1,4 +1,4 @@
-# X360 Nexus — Native Android Experimental (6.3)
+# X360 Nexus — Native Android Experimental (6.4)
 
 Native Android APK: Java/Android SDK, OpenGL ES 2, Android AudioTrack and Rust JNI (ARM64-v8a).
 
@@ -22,7 +22,7 @@ Xbox kernel services, XMA decoding and compatibility for Forza/Minecraft.
 
 ## Build
 
-GitHub Actions: `.github/workflows/x360-native-android-v63.yml`, branch `feature/x360-nexus-native-v6.3`.
+GitHub Actions: `.github/workflows/x360-native-android-v64.yml`, branch `feature/x360-nexus-native-v6.4`.
 
 `cargo test --manifest-path core/Cargo.toml`
 
@@ -48,3 +48,21 @@ Use only game files that you are authorized to use.
 - Optional haptic vibration for native buttons, gamepad touch presses and library actions (Android VIBRATE permission), toggle in Controls.
 - Not an online cover browser: no official game art bundled, fetched or rehosted. Users supply their own artwork images.
 - Cover support applies to any cataloged title, not a claim of automatic identification of every official release.
+
+
+## Version 6.4: GPU Xenos Lab and vibration debugging
+
+- **Xenos Lab is an independent software diagnostic**, NOT Xbox 360 Xenos graphics:
+  - original bounded GPU command queue, 320×180 ARGB framebuffer
+  - clear, scissor rectangles, software rasterization of filled triangles
+  - source-over alpha blending, procedural checkerboard texture sampling
+  - three test scenes, JNI preview, counts of commands/pixels and clipping
+  - automated Rust tests for drawing, scissor, blending, limits and scene generation
+- Android diagnostic panel renders the Rust framebuffer as a native Bitmap.
+- Device haptic test reports hardware, Android haptic setting and requested strength;
+  explicit two-pulse motor test, fallback native View feedback, duration increased.
+- Library adds search, favorites and alphabetical/recent ordering on-device.
+- Not implemented: actual Xenos PM4 packet decoding, Xenos registers,
+  shader microcode, EDRAM or commercial Xbox 360 game GPU emulation.
+- Device haptic test must be verified on the phone: API success alone cannot
+  prove physical vibration. Galaxy/Android settings may disable it.
