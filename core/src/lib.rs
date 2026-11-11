@@ -5,6 +5,7 @@ pub mod gpu;
 pub mod input;
 pub mod kernel;
 pub mod loader;
+pub mod xex_loader;
 pub mod memory;
 pub mod galaxy;
 mod galaxy_jni;

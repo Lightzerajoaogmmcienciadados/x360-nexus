@@ -73,5 +73,5 @@ pub fn inspect_default_xex<R:Read+Seek>(r:&mut R)->Result<String,String>{
  let mut header=vec![0u8;n];r.read_exact(&mut header).map_err(|e|e.to_string())?;
  let x=inspect_xex(&header)?;
  if x.header_size as u64>entry.size as u64{return Err("Tamanho de cabecalho XEX invalido".into())}
- Ok(format!("Default.xex encontrado\nTamanho: {} bytes\nModulo flags: 0x{:08X}\nHeader size: {}\nSecurity offset: 0x{:X}\nOptional headers: {}\n\nXEX2 identificado. Descriptografia, relocacao, imports e execucao ainda nao implementadas.",entry.size,x.module_flags,x.header_size,x.security_offset,x.optional_headers))
+ crate::xex_loader::format_report(&header,entry.size as u64)
 }
