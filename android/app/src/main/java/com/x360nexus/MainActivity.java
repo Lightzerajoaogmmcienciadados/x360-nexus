@@ -20,6 +20,8 @@ public class MainActivity extends Activity {
     static { boolean ok;try{System.loadLibrary("x360nexus");ok=true;}catch(Throwable t){ok=false;}RUST=ok; }
     private native String nativeSelfTest();
     private native String nativeInspectIso(int fd);
+    private native String nativeInspectDefaultXex(int fd);
+    private Uri selectedIso;
     private native String nativeRunDemo();
     private native void nativeSetButton(int mask,boolean pressed);
     private native void nativeSetAxis(int axis,int value);
@@ -40,9 +42,18 @@ public class MainActivity extends Activity {
         root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(18,26,18,24);
         root.setBackground(new GalaxyBackground());
         root.addView(label("✕ PROJECT XENON",29,GREEN));
-        root.addView(label("4.2: GALAXY ENGINE  •  Rust / PowerPC\nISO XDVDFS • Controles • OpenGL ES",15,Color.WHITE));
+        root.addView(label("4.3: MINECRAFT XEX ENGINE  •  Rust / PowerPC\nISO XDVDFS • Controles • OpenGL ES",15,Color.WHITE));
         root.addView(button("💿 SELECIONAR ISO",()->{
             Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("*/*");startActivityForResult(i,PICK_ISO);
+        }));
+        root.addView(button("🔎 ANALISAR DEFAULT.XEX (MINECRAFT)",()->{
+            if(selectedIso==null){report("Selecione primeiro a ISO do jogo.");return;}
+            if(!RUST){report("Rust indisponivel");return;}
+            try(ParcelFileDescriptor pfd=getContentResolver().openFileDescriptor(selectedIso,"r")){
+                if(pfd==null){report("Nao foi possivel abrir a ISO");return;}
+                int fd=ParcelFileDescriptor.dup(pfd.getFileDescriptor()).detachFd();
+                report(nativeInspectDefaultXex(fd));
+            }catch(Exception ex){report("Erro ao analisar XEX: "+ex.getMessage());}
         }));
         root.addView(button("▶ EXECUTAR DEMO POWERPC",()->report(RUST?nativeRunDemo():"Biblioteca Rust indisponivel")));
         root.addView(button("⚙ CONFIGURAÇÕES",this::settings));
@@ -86,7 +97,7 @@ public class MainActivity extends Activity {
     @Override public boolean onKeyUp(int key,KeyEvent e){int bit=mapKey(key);if(bit>=0&&RUST){nativeSetButton(1<<bit,false);return true;}return super.onKeyUp(key,e);}
     private int mapKey(int k){switch(k){case KeyEvent.KEYCODE_BUTTON_A:return 0;case KeyEvent.KEYCODE_BUTTON_B:return 1;case KeyEvent.KEYCODE_BUTTON_X:return 2;case KeyEvent.KEYCODE_BUTTON_Y:return 3;case KeyEvent.KEYCODE_BUTTON_L1:return 4;case KeyEvent.KEYCODE_BUTTON_R1:return 5;case KeyEvent.KEYCODE_BUTTON_START:return 6;case KeyEvent.KEYCODE_BUTTON_SELECT:return 7;case KeyEvent.KEYCODE_DPAD_UP:return 8;case KeyEvent.KEYCODE_DPAD_DOWN:return 9;case KeyEvent.KEYCODE_DPAD_LEFT:return 10;case KeyEvent.KEYCODE_DPAD_RIGHT:return 11;default:return -1;}}
     @Override public boolean onGenericMotionEvent(MotionEvent e){if((e.getSource()&InputDevice.SOURCE_JOYSTICK)==InputDevice.SOURCE_JOYSTICK&&e.getAction()==MotionEvent.ACTION_MOVE&&RUST){nativeSetAxis(0,(int)(e.getAxisValue(MotionEvent.AXIS_X)*32767));nativeSetAxis(1,(int)(e.getAxisValue(MotionEvent.AXIS_Y)*32767));nativeSetAxis(2,(int)(e.getAxisValue(MotionEvent.AXIS_Z)*32767));nativeSetAxis(3,(int)(e.getAxisValue(MotionEvent.AXIS_RZ)*32767));nativeSetAxis(4,(int)(e.getAxisValue(MotionEvent.AXIS_LTRIGGER)*255));nativeSetAxis(5,(int)(e.getAxisValue(MotionEvent.AXIS_RTRIGGER)*255));return true;}return super.onGenericMotionEvent(e);}
-    @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request!=PICK_ISO||result!=RESULT_OK||data==null||data.getData()==null)return;Uri uri=data.getData();if(!RUST){report("Rust indisponivel");return;}try(ParcelFileDescriptor pfd=getContentResolver().openFileDescriptor(uri,"r")){if(pfd==null){report("Falha ao abrir arquivo");return;}int fd=ParcelFileDescriptor.dup(pfd.getFileDescriptor()).detachFd();report(nativeInspectIso(fd));}catch(Exception ex){report("Erro ISO: "+ex.getMessage());}}
+    @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request!=PICK_ISO||result!=RESULT_OK||data==null||data.getData()==null)return;Uri uri=data.getData();selectedIso=uri;if(!RUST){report("Rust indisponivel");return;}try(ParcelFileDescriptor pfd=getContentResolver().openFileDescriptor(uri,"r")){if(pfd==null){report("Falha ao abrir arquivo");return;}int fd=ParcelFileDescriptor.dup(pfd.getFileDescriptor()).detachFd();report(nativeInspectIso(fd));}catch(Exception ex){report("Erro ISO: "+ex.getMessage());}}
     private static class GalaxyBackground extends Drawable {
         Paint p=new Paint(3);@Override public void draw(Canvas c){android.graphics.Rect b=getBounds();p.setShader(new LinearGradient(0,0,b.width(),b.height(),new int[]{0xFF030811,0xFF102B2D,0xFF190B35},null,Shader.TileMode.CLAMP));c.drawRect(b,p);p.setShader(null);java.util.Random rand=new java.util.Random(41);for(int i=0;i<180;i++){p.setColor(i%5==0?0xAA50FFAA:0x66FFFFFF);c.drawCircle(rand.nextInt(Math.max(1,b.width())),rand.nextInt(Math.max(1,b.height())),1+rand.nextInt(3),p);}}@Override public void setAlpha(int a){}@Override public void setColorFilter(android.graphics.ColorFilter f){}@Override public int getOpacity(){return android.graphics.PixelFormat.OPAQUE;}
     }
