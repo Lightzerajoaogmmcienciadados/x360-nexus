@@ -1,19 +1,18 @@
-# Project Xenon 4.7 — Kernel Homebrew Engine
+# Project Xenon 4.8 — XEX Runtime Diagnostics
 
-Base: versão 4.6, preservando ISO XDVDFS, análise XEX2, memória virtual, controles e interface Mali OpenGL ES.
+Projeto Android + Rust baseado no 4.7, com todos os arquivos de origem.
 
 ## Novo
-- Interpretador PowerPC experimental com instrução `sc` (`0x44000002`) e ABI **privada** para homebrews originais.
-- `r0=1`: retorna contador de ticks em `r3`; `r0=2`: retorna número de páginas em `r3`; `r0=3`: encerra execução com `r3=0`.
-- Teste Rust `kernel_demo()` e JNI `nativeKernelSelfTest()`, botão Android **TESTAR KERNEL HOMEBREW**.
-- Limite de execução e validação de acesso à memória preservados.
+- `core/src/xex_runtime.rs`: análise de pré-requisitos de execução XEX2 com verificações de cabeçalho e lista explícita de bloqueios.
+- JNI `nativeRuntimeSelfTest`, botão Android `TESTAR XEX RUNTIME`.
+- Versão Android 4.8.0.
+- Testes unitários para cabeçalho sintético e dados inválidos.
 
-## Limitações
-NÃO implementa o kernel Xbox 360, descriptografia XEX, GPU Xenos, nem execução de Minecraft Xbox 360 Edition. As chamadas `sc` são exclusivas deste projeto, não APIs Xbox 360.
+## O que **não** faz
+Não descriptografa nem descomprime executáveis comerciais, não carrega suas seções reais, não resolve imports Xbox, não emula GPU Xenos e **não inicia Minecraft Xbox 360 Edition**. O diagnóstico de runtime usa um cabeçalho sintético para testar o parser. A análise de ISO/XEX2 da versão anterior permanece.
 
-## Compilar
-`cargo test --manifest-path core/Cargo.toml`
+## Compilação
+Execute `cargo test --manifest-path core/Cargo.toml` e depois `.github/workflows/android.yml` no GitHub Actions (workflow_dispatch). Não foi possível compilar o APK neste ambiente.
 
-Para APK: envie o conteúdo desta pasta à branch `feature/project-xenon-v4.7` e execute `.github/workflows/android.yml` via GitHub Actions.
-
-Código-fonte fornecido sem APK pré-compilado; não testado em dispositivo neste ambiente.
+## Android
+Mantenha os arquivos nas mesmas pastas. A interface OpenGL ES continua experimental para Mali-G57; isso não é tradução da GPU Xenos.
