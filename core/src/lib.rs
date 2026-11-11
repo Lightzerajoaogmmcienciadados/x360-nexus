@@ -2,8 +2,7 @@
 #![allow(dead_code)]
 
 // X360 Nexus v0.6 - Project Xenon
-// Experimental Xbox 360 infrastructure.
-// Commercial game execution is not implemented.
+// Experimental Rust emulator infrastructure.
 
 pub mod audio;
 pub mod cpu;
@@ -75,6 +74,29 @@ impl Machine {
         Ok(executed)
     }
 
+    pub fn gpu_test(&mut self) -> Result<(), String> {
+        self.gpu.render_test();
+
+        if self.gpu.frame_count() != 1 {
+            return Err("GPU frame test failed".into());
+        }
+
+        let expected = 640 * 360 * 4;
+
+        if self.gpu.framebuffer_size() != expected {
+            return Err("GPU framebuffer failed".into());
+        }
+
+        let pixel = self.gpu.get_pixel(320, 180)
+            .map_err(str::to_string)?;
+
+        if pixel != [0, 220, 80, 255] {
+            return Err("GPU pixel test failed".into());
+        }
+
+        Ok(())
+    }
+
     pub fn self_test() -> Result<String, String> {
         let mut machine = Machine::new();
 
@@ -104,19 +126,27 @@ impl Machine {
             return Err("Kernel tick failed".into());
         }
 
+        machine.gpu_test()?;
+
         Ok(format!(
             "X360 NEXUS v0.6 - PROJECT XENON\n\
              Rust JNI: OK\n\
-             CPU PowerPC ADDI: OK\n\
+             CPU PowerPC: OK\n\
              Memoria LWZ/STW: OK\n\
              Registrador r4: {}\n\
              Kernel: {} ticks\n\
-             GPU: experimental\n\
+             GPU framebuffer: OK\n\
+             GPU resolucao: {}x{}\n\
+             GPU frames: {}\n\
+             GPU renderizacao: OK\n\
              Audio: experimental\n\
              Controles: estrutura inicial\n\
              Jogos comerciais: nao suportados",
             machine.cpu.gpr[4],
-            machine.kernel.ticks()
+            machine.kernel.ticks(),
+            machine.gpu.width,
+            machine.gpu.height,
+            machine.gpu.frame_count()
         ))
     }
 }
@@ -135,13 +165,15 @@ mod tests {
     fn machine_test() {
         let result = Machine::self_test().unwrap();
 
+        assert!(result.contains("PowerPC: OK"));
         assert!(result.contains("LWZ/STW: OK"));
+        assert!(result.contains("GPU framebuffer: OK"));
         assert!(result.contains("Kernel: 3 ticks"));
     }
 }
 
-// Android JNI integration.
-// Keeps the same native method used by v0.5.
+// Android JNI
+// Preserve nativeSelfTest from the existing app.
 
 #[no_mangle]
 pub extern "system" fn
