@@ -12,8 +12,10 @@ import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.net.Uri;
 import android.provider.OpenableColumns;
+import android.view.Gravity;
 import android.view.MotionEvent;
 import android.widget.*;
+
 import java.io.InputStream;
 import java.util.Locale;
 
@@ -42,6 +44,9 @@ public class MainActivity extends Activity {
     private native int[] nativeGpuFrameDynamic(
         int x, int y, long tick
     );
+    private native int[] nativeGpu3DFrame(
+        float yaw, float pitch
+    );
 
     private TextView result;
     private TextView fpsText;
@@ -52,10 +57,16 @@ public class MainActivity extends Activity {
         new Handler(Looper.getMainLooper());
 
     private boolean running = false;
+    private boolean mode3D = false;
+
     private int playerX = 296;
     private int playerY = 156;
     private int dx = 0;
     private int dy = 0;
+
+    private float cameraYaw = 0.0f;
+    private float cameraPitch = 0.3f;
+
     private long tick = 0;
     private long lastFrame = 0;
     private long fpsStart = 0;
@@ -65,13 +76,15 @@ public class MainActivity extends Activity {
     private final int green =
         Color.rgb(30, 210, 95);
 
-    private TextView label(String s, int size, int color) {
-        TextView t = new TextView(this);
-        t.setText(s);
-        t.setTextSize(size);
-        t.setTextColor(color);
-        t.setPadding(8, 12, 8, 12);
-        return t;
+    private TextView label(
+        String value, int size, int color
+    ) {
+        TextView text = new TextView(this);
+        text.setText(value);
+        text.setTextSize(size);
+        text.setTextColor(color);
+        text.setPadding(8, 12, 8, 12);
+        return text;
     }
 
     private Button button(String title) {
@@ -88,22 +101,40 @@ public class MainActivity extends Activity {
 
             long now = SystemClock.uptimeMillis();
 
-            // Target approximately 30 FPS.
             if (now - lastFrame >= 33) {
                 lastFrame = now;
 
-                playerX = Math.max(
-                    0,
-                    Math.min(WIDTH - SIZE, playerX + dx * 5)
-                );
+                if (mode3D) {
+                    cameraYaw += 0.012f;
+                    cameraYaw += dx * 0.025f;
+                    cameraPitch += dy * 0.025f;
 
-                playerY = Math.max(
-                    0,
-                    Math.min(HEIGHT - SIZE, playerY + dy * 5)
-                );
+                    cameraPitch = Math.max(
+                        -1.2f,
+                        Math.min(1.2f, cameraPitch)
+                    );
+                } else {
+                    playerX = Math.max(
+                        0,
+                        Math.min(
+                            WIDTH - SIZE,
+                            playerX + dx * 5
+                        )
+                    );
+
+                    playerY = Math.max(
+                        0,
+                        Math.min(
+                            HEIGHT - SIZE,
+                            playerY + dy * 5
+                        )
+                    );
+                }
 
                 tick++;
-                renderDynamic();
+                renderFrame();
+
+                if (!running) return;
 
                 fpsFrames++;
 
@@ -112,15 +143,11 @@ public class MainActivity extends Activity {
                     fps = (int) (
                         fpsFrames * 1000L / elapsed
                     );
+
                     fpsFrames = 0;
                     fpsStart = now;
 
-                    fpsText.setText(
-                        "FPS: " + fps +
-                        " | Frame: " + tick +
-                        " | Posicao: " +
-                        playerX + "," + playerY
-                    );
+                    updateFps();
                 }
             }
 
@@ -130,30 +157,69 @@ public class MainActivity extends Activity {
         }
     };
 
-    private void renderDynamic() {
+    private void updateFps() {
+        if (mode3D) {
+            fpsText.setText(
+                "GPU 3D | FPS: " + fps +
+                " | Frame: " + tick +
+                "\nYaw: " +
+                String.format(
+                    Locale.US, "%.2f", cameraYaw
+                ) +
+                " | Pitch: " +
+                String.format(
+                    Locale.US, "%.2f", cameraPitch
+                )
+            );
+        } else {
+            fpsText.setText(
+                "GPU 2D | FPS: " + fps +
+                " | Frame: " + tick +
+                " | Posicao: " +
+                playerX + "," + playerY
+            );
+        }
+    }
+
+    private void renderFrame() {
         if (!RUST_AVAILABLE) {
             stopAnimation();
-            result.setText("Biblioteca Rust indisponivel.");
+            result.setText(
+                "Biblioteca Rust indisponivel."
+            );
             return;
         }
 
         try {
-            int[] pixels = nativeGpuFrameDynamic(
-                playerX, playerY, tick
-            );
+            int[] pixels;
+
+            if (mode3D) {
+                pixels = nativeGpu3DFrame(
+                    cameraYaw, cameraPitch
+                );
+            } else {
+                pixels = nativeGpuFrameDynamic(
+                    playerX, playerY, tick
+                );
+            }
 
             if (pixels == null ||
                 pixels.length != WIDTH * HEIGHT) {
                 stopAnimation();
                 result.setText(
-                    "Framebuffer invalido."
+                    "Erro: framebuffer invalido."
                 );
                 return;
             }
 
             bitmap.setPixels(
-                pixels, 0, WIDTH,
-                0, 0, WIDTH, HEIGHT
+                pixels,
+                0,
+                WIDTH,
+                0,
+                0,
+                WIDTH,
+                HEIGHT
             );
 
             screen.invalidate();
@@ -170,21 +236,29 @@ public class MainActivity extends Activity {
         if (running) return;
 
         if (!RUST_AVAILABLE) {
-            result.setText("Rust JNI indisponivel.");
+            result.setText(
+                "Biblioteca Rust nao encontrada."
+            );
             return;
         }
 
         running = true;
         fpsFrames = 0;
+        fps = 0;
         fpsStart = SystemClock.uptimeMillis();
         lastFrame = 0;
 
         handler.post(frameLoop);
 
         result.setText(
-            "GPU dinamica ativa.\n" +
-            "Use os controles para mover o quadrado.\n" +
-            "Backend: Rust software experimental.\n" +
+            "X360 NEXUS v0.7\n" +
+            (mode3D
+                ? "GPU 3D experimental ativa.\n" +
+                  "Cubo giratorio e Z-buffer.\n" +
+                  "Setas controlam a camera.\n"
+                : "GPU 2D experimental ativa.\n" +
+                  "Setas movem o quadrado.\n") +
+            "Backend: Rust software.\n" +
             "Xenos real: nao implementado."
         );
     }
@@ -194,6 +268,20 @@ public class MainActivity extends Activity {
         dx = 0;
         dy = 0;
         handler.removeCallbacks(frameLoop);
+    }
+
+    private void switchMode(boolean use3D) {
+        stopAnimation();
+
+        mode3D = use3D;
+        tick = 0;
+
+        if (mode3D) {
+            cameraYaw = 0.0f;
+            cameraPitch = 0.3f;
+        }
+
+        startAnimation();
     }
 
     private Button direction(
@@ -229,61 +317,61 @@ public class MainActivity extends Activity {
         ScrollView scroll = new ScrollView(this);
         LinearLayout root = new LinearLayout(this);
 
-        root.setOrientation(LinearLayout.VERTICAL);
+        root.setOrientation(
+            LinearLayout.VERTICAL
+        );
         root.setPadding(24, 28, 24, 30);
         root.setBackgroundColor(
             Color.rgb(10, 17, 13)
         );
 
         root.addView(label(
-            "X360 NEXUS", 32, green
+            "X360 NEXUS",
+            32,
+            green
         ));
 
         root.addView(label(
-            "Android 0.6.1 - PROJECT XENON\n" +
-            "PowerPC | GPU 2D | FPS | Controles",
-            16, Color.WHITE
+            "Android 0.7 - PROJECT XENON\n" +
+            "PowerPC | GPU 2D/3D | FPS | Controles",
+            16,
+            Color.WHITE
         ));
 
         Button open = button(
             "SELECIONAR ARQUIVO DE JOGO"
         );
-
-        open.setOnClickListener(v -> {
-            Intent i = new Intent(
-                Intent.ACTION_OPEN_DOCUMENT
-            );
-            i.addCategory(Intent.CATEGORY_OPENABLE);
-            i.setType("*/*");
-            startActivityForResult(i, PICK_FILE);
-        });
-
         root.addView(open);
 
         Button test = button(
             "TESTAR CPU RUST + KERNEL"
         );
-
         root.addView(test);
 
-        Button start = button(
-            "INICIAR GPU DINAMICA"
+        Button start2D = button(
+            "INICIAR GPU 2D"
         );
+        root.addView(start2D);
+
+        Button start3D = button(
+            "INICIAR GPU 3D - CUBO"
+        );
+        root.addView(start3D);
 
         Button pause = button(
             "PAUSAR GPU"
         );
-
-        root.addView(start);
         root.addView(pause);
 
         root.addView(label(
             "GPU EXPERIMENTAL - 640x360",
-            18, green
+            18,
+            green
         ));
 
         bitmap = Bitmap.createBitmap(
-            WIDTH, HEIGHT,
+            WIDTH,
+            HEIGHT,
             Bitmap.Config.ARGB_8888
         );
 
@@ -297,29 +385,32 @@ public class MainActivity extends Activity {
         );
         screen.setBackgroundColor(Color.BLACK);
 
-        root.addView(screen, new LinearLayout.LayoutParams(
-            -1, -2
-        ));
+        root.addView(
+            screen,
+            new LinearLayout.LayoutParams(-1, -2)
+        );
 
         fpsText = label(
-            "FPS: 0 | Frame: 0",
-            16, green
+            "GPU parada | FPS: 0",
+            16,
+            green
         );
         root.addView(fpsText);
 
         root.addView(label(
             "CONTROLES VIRTUAIS",
-            18, green
+            18,
+            green
         ));
 
         LinearLayout top = new LinearLayout(this);
-        top.setGravity(android.view.Gravity.CENTER);
+        top.setGravity(Gravity.CENTER);
 
         top.addView(direction("▲", 0, -1));
         root.addView(top);
 
         LinearLayout middle = new LinearLayout(this);
-        middle.setGravity(android.view.Gravity.CENTER);
+        middle.setGravity(Gravity.CENTER);
 
         middle.addView(direction("◀", -1, 0));
         middle.addView(direction("▼", 0, 1));
@@ -328,18 +419,32 @@ public class MainActivity extends Activity {
         root.addView(middle);
 
         result = label(
-            "X360 Nexus v0.6.1 pronto.\n" +
-            "Toque em INICIAR GPU DINAMICA.\n" +
+            "X360 Nexus v0.7 pronto.\n" +
+            "Selecione GPU 2D ou GPU 3D.\n" +
             "Jogos comerciais nao suportados.",
-            16, Color.LTGRAY
+            16,
+            Color.LTGRAY
         );
-
         root.addView(result);
+
+        open.setOnClickListener(v -> {
+            Intent intent = new Intent(
+                Intent.ACTION_OPEN_DOCUMENT
+            );
+            intent.addCategory(
+                Intent.CATEGORY_OPENABLE
+            );
+            intent.setType("*/*");
+
+            startActivityForResult(
+                intent, PICK_FILE
+            );
+        });
 
         test.setOnClickListener(v -> {
             if (!RUST_AVAILABLE) {
                 result.setText(
-                    "Biblioteca Rust nao encontrada."
+                    "Biblioteca Rust indisponivel."
                 );
                 return;
             }
@@ -353,10 +458,19 @@ public class MainActivity extends Activity {
             }
         });
 
-        start.setOnClickListener(v -> startAnimation());
+        start2D.setOnClickListener(
+            v -> switchMode(false)
+        );
+
+        start3D.setOnClickListener(
+            v -> switchMode(true)
+        );
 
         pause.setOnClickListener(v -> {
             stopAnimation();
+            fpsText.setText(
+                "GPU pausada | FPS: 0"
+            );
             result.setText("GPU pausada.");
         });
 
@@ -366,8 +480,8 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
-        super.onPause();
         stopAnimation();
+        super.onPause();
     }
 
     @Override
@@ -382,7 +496,9 @@ public class MainActivity extends Activity {
         int status,
         Intent data
     ) {
-        super.onActivityResult(request, status, data);
+        super.onActivityResult(
+            request, status, data
+        );
 
         if (request != PICK_FILE ||
             status != RESULT_OK ||
@@ -395,28 +511,44 @@ public class MainActivity extends Activity {
         String name = uri.getLastPathSegment();
         long size = -1;
 
-        try (Cursor c = getContentResolver()
-                .query(uri, null, null, null, null)) {
+        try (Cursor cursor =
+                getContentResolver().query(
+                    uri, null, null, null, null
+                )) {
 
-            if (c != null && c.moveToFirst()) {
-                int n = c.getColumnIndex(
-                    OpenableColumns.DISPLAY_NAME
-                );
-                int z = c.getColumnIndex(
-                    OpenableColumns.SIZE
-                );
+            if (cursor != null &&
+                cursor.moveToFirst()) {
 
-                if (n >= 0) name = c.getString(n);
-                if (z >= 0 && !c.isNull(z)) {
-                    size = c.getLong(z);
+                int nameColumn =
+                    cursor.getColumnIndex(
+                        OpenableColumns.DISPLAY_NAME
+                    );
+
+                int sizeColumn =
+                    cursor.getColumnIndex(
+                        OpenableColumns.SIZE
+                    );
+
+                if (nameColumn >= 0) {
+                    name = cursor.getString(
+                        nameColumn
+                    );
+                }
+
+                if (sizeColumn >= 0 &&
+                    !cursor.isNull(sizeColumn)) {
+                    size = cursor.getLong(
+                        sizeColumn
+                    );
                 }
             }
         } catch (Exception ignored) {}
 
         String magic = "nao identificado";
 
-        try (InputStream in = getContentResolver()
-                .openInputStream(uri)) {
+        try (InputStream in =
+                getContentResolver()
+                    .openInputStream(uri)) {
 
             if (in != null) {
                 byte[] bytes = new byte[4];
@@ -448,7 +580,7 @@ public class MainActivity extends Activity {
             "Arquivo: " + name +
             "\nTamanho: " + size + " bytes" +
             "\nAssinatura: " + magic +
-            "\nAnalise informativa apenas." +
+            "\nInspecao experimental." +
             "\nExecucao nao implementada."
         );
     }
