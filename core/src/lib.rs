@@ -11,6 +11,7 @@ pub mod virtual_memory;
 pub mod execution_engine;
 pub mod xex_runtime;
 pub mod xex_image;
+pub mod xex_boot;
 pub mod galaxy;
 mod galaxy_jni;
 use audio::Audio;use cpu::Cpu;use gpu::Gpu;use input::Controller;use kernel::Kernel;use memory::Memory;
@@ -53,5 +54,11 @@ pub extern "system" fn Java_com_x360nexus_MainActivity_nativeRuntimeSelfTest(mut
 #[no_mangle]
 pub extern "system" fn Java_com_x360nexus_MainActivity_nativeImageSelfTest(mut env:jni::JNIEnv,_:jni::objects::JObject)->jni::sys::jstring{
  let message=match std::panic::catch_unwind(xex_image::demo){Ok(Ok(v))=>v,Ok(Err(e))=>format!("XEX Image error: {e}"),Err(_)=>"XEX Image panic".into()};
+ env.new_string(message).map(|v|v.into_raw()).unwrap_or(std::ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_x360nexus_MainActivity_nativeBootSelfTest(mut env:jni::JNIEnv,_:jni::objects::JObject)->jni::sys::jstring {
+ let message=match std::panic::catch_unwind(xex_boot::demo){Ok(Ok(v))=>v,Ok(Err(e))=>format!("XEX Boot error: {e}"),Err(_)=>"XEX Boot panic".into()};
  env.new_string(message).map(|v|v.into_raw()).unwrap_or(std::ptr::null_mut())
 }
