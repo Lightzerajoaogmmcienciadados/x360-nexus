@@ -1,18 +1,12 @@
-# Project Xenon 4.8 — XEX Runtime Diagnostics
+# Project Xenon 4.9 — XEX Image Engine
 
-Projeto Android + Rust baseado no 4.7, com todos os arquivos de origem.
-
-## Novo
-- `core/src/xex_runtime.rs`: análise de pré-requisitos de execução XEX2 com verificações de cabeçalho e lista explícita de bloqueios.
-- JNI `nativeRuntimeSelfTest`, botão Android `TESTAR XEX RUNTIME`.
-- Versão Android 4.8.0.
-- Testes unitários para cabeçalho sintético e dados inválidos.
-
-## O que **não** faz
-Não descriptografa nem descomprime executáveis comerciais, não carrega suas seções reais, não resolve imports Xbox, não emula GPU Xenos e **não inicia Minecraft Xbox 360 Edition**. O diagnóstico de runtime usa um cabeçalho sintético para testar o parser. A análise de ISO/XEX2 da versão anterior permanece.
-
-## Compilação
-Execute `cargo test --manifest-path core/Cargo.toml` e depois `.github/workflows/android.yml` no GitHub Actions (workflow_dispatch). Não foi possível compilar o APK neste ambiente.
+Baseado no código completo da v4.8. Adiciona `core/src/xex_image.rs` com inspeção limitada do descritor XEX2 `Base file format`, tipo de armazenamento e código de criptografia, com checagem de limites e testes unitários.
 
 ## Android
-Mantenha os arquivos nas mesmas pastas. A interface OpenGL ES continua experimental para Mali-G57; isso não é tradução da GPU Xenos.
+O botão **TESTAR XEX IMAGE ENGINE** executa um teste sintético no núcleo Rust JNI. Não analisa automaticamente a ISO selecionada. O botão de análise da ISO continua disponível como na v4.8.
+
+## Compilar
+`cargo test --manifest-path core/Cargo.toml` e GitHub Actions > workflow Android > Run workflow na branch v4.9.
+
+## Limitações
+**Não executa Minecraft Xbox 360.** Não inclui descriptografia, descompressão, mapeamento real de código XEX, imports do kernel nem emulação Xenos. A leitura de formato é um diagnóstico; o teste usa dados sintéticos. Código-fonte não compilado/testado neste ambiente.
