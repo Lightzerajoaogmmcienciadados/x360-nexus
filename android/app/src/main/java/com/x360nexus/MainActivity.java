@@ -20,6 +20,7 @@ public class MainActivity extends Activity {
     static { boolean ok;try{System.loadLibrary("x360nexus");ok=true;}catch(Throwable t){ok=false;}RUST=ok; }
     private native String nativeSelfTest();
     private native String nativeMemorySelfTest();
+    private native String nativeExecutionSelfTest();
     private native String nativeInspectIso(int fd);
     private native String nativeInspectDefaultXex(int fd);
     private Uri selectedIso;
@@ -41,9 +42,10 @@ public class MainActivity extends Activity {
         ScrollView scroll=new ScrollView(this);
         scroll.setFillViewport(true);
         root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(18,26,18,24);
+        getWindow().getDecorView().setSystemUiVisibility(0);
         root.setBackground(new GalaxyBackground());
         root.addView(label("✕ PROJECT XENON",29,GREEN));
-        root.addView(label("4.5: MEMORY ENGINE  •  Rust / PowerPC\nISO XDVDFS • Controles • OpenGL ES",15,Color.WHITE));
+        root.addView(label("4.6: EXECUTION ENGINE  •  Rust / PowerPC\nISO XDVDFS • Controles • OpenGL ES",15,Color.WHITE));
         root.addView(button("💿 SELECIONAR ISO",()->{
             Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("*/*");startActivityForResult(i,PICK_ISO);
         }));
@@ -60,6 +62,7 @@ public class MainActivity extends Activity {
         root.addView(button("⚙ CONFIGURAÇÕES",this::settings));
         root.addView(button("🎮 MOSTRAR / OCULTAR CONTROLES",()->{showPad=!showPad;prefs.edit().putBoolean("pad",showPad).apply();buildUI();}));
         root.addView(button("🧠 TESTAR MEMÓRIA VIRTUAL",()->report(RUST?nativeMemorySelfTest():"Rust indisponivel")));
+        root.addView(button("⚡ TESTAR EXECUTION ENGINE",()->report(RUST?nativeExecutionSelfTest():"Rust indisponivel")));
         root.addView(button("🧪 TESTAR NÚCLEO",()->report(RUST?nativeSelfTest():"Rust indisponivel")));
         output=label("Selecione uma ISO para inspecionar arquivos.\nExecucao de jogos comerciais ainda nao implementada.",15,Color.WHITE);
         root.addView(output);
