@@ -1,21 +1,19 @@
-# Project Xenon 4.4 — XEX Loader Diagnostics (Android + Rust)
+# Project Xenon 4.5 — Memory Engine
 
-**Base:** código-fonte v4.3 preservado e estendido.
+Base: pacote Project Xenon 4.4 XEX Loader. Contém todos os arquivos do projeto Android/Rust, mais `core/src/virtual_memory.rs`.
 
-## Novo na 4.4
-- Leitura segura dos registros de cabeçalhos opcionais XEX2 em Rust.
-- Detecção de entry point e image base declarados, quando presentes.
-- Diagnóstico de chaves de cabeçalhos, validação de limites e testes unitários.
-- Interface Android atualizada, JNI da v4.3 preservado.
-- Workflow GitHub Actions incluído para compilação do APK Android arm64.
+## Implementado nesta versão
+- Memória virtual esparsa por páginas de 4 KiB (até 16 MiB).
+- Permissões de leitura, escrita e execução; detecção de páginas sobrepostas.
+- Verificação de limites e escrita atômica (sem alteração parcial quando o acesso é inválido).
+- Leitura big-endian de instruções PowerPC inclusive cruzando páginas.
+- Testes Rust e botão Android **TESTAR MEMÓRIA VIRTUAL** via JNI.
+- Mantida a análise XDVDFS e XEX2 da v4.4.
 
-## Como gerar o APK
-1. Extraia o ZIP e envie todos os arquivos ao repositório na branch desejada.
-2. Em GitHub Actions, execute o workflow **X360 Nexus Android Rust JNI** na mesma branch.
-3. Baixe o artefato APK da execução concluída.
+## Compilação
+1. Envie os arquivos preservando a estrutura de pastas para sua branch GitHub.
+2. Execute `.github/workflows/android.yml` pelo GitHub Actions.
+3. Baixe o artifact APK após um build bem-sucedido.
 
 ## Limites
-Não há descriptografia, descompressão, relocação, mapeamento de memória executável, implementação de imports Xbox 360 nem execução de Minecraft.
-O número chamado `header_size` na versão anterior é o offset de imagem XEX, não um tamanho de cabeçalho confirmado.
-OpenGL ES 2.0 é usado para a interface; **não** traduz comandos da GPU Xenos para Mali.
-Este ZIP é código-fonte e não um APK.
+A memória virtual implementada é um modelo próprio para homebrew/testes, **não** o MMU do Xbox 360. O `Default.xex` comercial não é descriptografado, descompactado nem executado. A GPU Xenos e APIs do kernel Xbox 360 permanecem não implementadas. Não foi compilado ou testado como APK neste ambiente.
