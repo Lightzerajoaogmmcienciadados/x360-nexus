@@ -56,3 +56,22 @@ pub fn inspect_xex(data:&[u8])->Result<XexInfo,String>{
  #[test]fn iso(){let mut v=vec![0;131072];v[65536..65556].copy_from_slice(MAGIC);v[67564..67584].copy_from_slice(MAGIC);v[65556..65560].copy_from_slice(&33u32.to_le_bytes());v[65560..65564].copy_from_slice(&32u32.to_le_bytes());assert_eq!(inspect_iso(&mut Cursor::new(v)).unwrap().root_sector,33)}
  #[test]fn xex(){let mut v=vec![0;24];v[..4].copy_from_slice(b"XEX2");assert!(inspect_xex(&v).is_ok())}
 }
+
+/// Finds Default.xex in the root directory and reads only its bounded header.
+/// Does not decrypt or execute XEX code.
+pub fn inspect_default_xex<R:Read+Seek>(r:&mut R)->Result<String,String>{
+ let iso=inspect_iso(r)?;
+ let entries=root_entries(r,&iso)?;
+ let entry=entries.iter().find(|e|!e.is_directory&&e.name.eq_ignore_ascii_case("default.xex"))
+   .ok_or("Default.xex nao encontrado na raiz")?;
+ let offset=iso.partition.checked_add((entry.start_sector as u64).checked_mul(SECTOR).ok_or("offset overflow")?).ok_or("offset overflow")?;
+ let end=offset.checked_add(entry.size as u64).ok_or("size overflow")?;
+ if end>iso.image_size{return Err("XEX ultrapassa tamanho da ISO".into())}
+ let n=(entry.size as usize).min(65536);
+ if n<24{return Err("XEX muito pequeno".into())}
+ r.seek(SeekFrom::Start(offset)).map_err(|e|e.to_string())?;
+ let mut header=vec![0u8;n];r.read_exact(&mut header).map_err(|e|e.to_string())?;
+ let x=inspect_xex(&header)?;
+ if x.header_size as u64>entry.size as u64{return Err("Tamanho de cabecalho XEX invalido".into())}
+ Ok(format!("Default.xex encontrado\nTamanho: {} bytes\nModulo flags: 0x{:08X}\nHeader size: {}\nSecurity offset: 0x{:X}\nOptional headers: {}\n\nXEX2 identificado. Descriptografia, relocacao, imports e execucao ainda nao implementadas.",entry.size,x.module_flags,x.header_size,x.security_offset,x.optional_headers))
+}

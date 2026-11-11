@@ -18,3 +18,12 @@ fn output(mut env:JNIEnv,msg:String)->jstring{env.new_string(msg).map(|s|s.into_
 #[no_mangle]pub extern "system" fn Java_com_x360nexus_MainActivity_nativeSetButton(_env:JNIEnv,_:JObject,mask:jint,pressed:jboolean){if let Ok(mut c)=pad().lock(){if pressed!=0{c.buttons|=mask as u32}else{c.buttons&=!(mask as u32)}}}
 #[no_mangle]pub extern "system" fn Java_com_x360nexus_MainActivity_nativeSetAxis(_env:JNIEnv,_:JObject,axis:jint,value:jint){if let Ok(mut c)=pad().lock(){let v=value.clamp(-32768,32767) as i16;match axis{0=>c.left_x=v,1=>c.left_y=v,2=>c.right_x=v,3=>c.right_y=v,4=>c.left_trigger=value.clamp(0,255) as u8,5=>c.right_trigger=value.clamp(0,255) as u8,_=>()}}}
 #[no_mangle]pub extern "system" fn Java_com_x360nexus_MainActivity_nativePadStatus(env:JNIEnv,_:JObject)->jstring{let s=pad().lock().map(|c|format!("Botoes: {:014b}\nL: {},{} R: {},{}\nLT={} RT={}",c.buttons,c.left_x,c.left_y,c.right_x,c.right_y,c.left_trigger,c.right_trigger)).unwrap_or_else(|_|"Erro no controle".into());output(env,s)}
+
+#[no_mangle]
+pub extern "system" fn Java_com_x360nexus_MainActivity_nativeInspectDefaultXex(env:JNIEnv,_:JObject,fd:jint)->jstring{
+ if fd<0{return output(env,"Descritor invalido".into())}
+ let mut file=unsafe{File::from_raw_fd(fd)};
+ let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||loader::inspect_default_xex(&mut file)));
+ let msg=match result{Ok(Ok(v))=>v,Ok(Err(e))=>format!("Falha ao analisar XEX: {e}"),Err(_)=>"Falha interna ao analisar XEX".into()};
+ output(env,msg)
+}
