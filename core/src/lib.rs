@@ -7,6 +7,7 @@ pub mod kernel;
 pub mod loader;
 pub mod xex_loader;
 pub mod memory;
+pub mod virtual_memory;
 pub mod galaxy;
 mod galaxy_jni;
 use audio::Audio;use cpu::Cpu;use gpu::Gpu;use input::Controller;use kernel::Kernel;use memory::Memory;
@@ -21,3 +22,9 @@ impl Default for Machine{fn default()->Self{Self::new()}}
  let msg=match galaxy::run_demo(){Ok(v)=>format!("Rust integrado: OK\n{v}\nGPU/Audio: infraestrutura experimental\nJogos comerciais: nao suportados"),Err(e)=>format!("Erro no nucleo: {e}")};env.new_string(msg).map(|s|s.into_raw()).unwrap_or(std::ptr::null_mut())
 }
 #[cfg(test)]mod tests{use super::*;#[test]fn machine(){let mut m=Machine::new();m.load_test_program(&[0x38,0x60,0,42]).unwrap();m.step().unwrap();assert_eq!(m.cpu.gpr[3],42);}}
+
+#[no_mangle]
+pub extern "system" fn Java_com_x360nexus_MainActivity_nativeMemorySelfTest(mut env:jni::JNIEnv,_:jni::objects::JObject)->jni::sys::jstring{
+ let message=match std::panic::catch_unwind(virtual_memory::demo){Ok(Ok(v))=>v,Ok(Err(e))=>format!("Memory Engine error: {e}"),Err(_)=>"Memory Engine internal error".into()};
+ env.new_string(message).map(|v|v.into_raw()).unwrap_or(std::ptr::null_mut())
+}
