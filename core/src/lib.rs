@@ -12,6 +12,7 @@ pub mod execution_engine;
 pub mod xex_runtime;
 pub mod xex_image;
 pub mod xex_boot;
+pub mod real_xex;
 pub mod galaxy;
 mod galaxy_jni;
 use audio::Audio;use cpu::Cpu;use gpu::Gpu;use input::Controller;use kernel::Kernel;use memory::Memory;

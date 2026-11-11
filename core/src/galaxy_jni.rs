@@ -27,3 +27,15 @@ pub extern "system" fn Java_com_x360nexus_MainActivity_nativeInspectDefaultXex(e
  let msg=match result{Ok(Ok(v))=>v,Ok(Err(e))=>format!("Falha ao analisar XEX: {e}"),Err(_)=>"Falha interna ao analisar XEX".into()};
  output(env,msg)
 }
+
+// Read an explicitly selected XEX file. The FD is a Java-owned duplicate.
+#[no_mangle]
+pub extern "system" fn Java_com_x360nexus_MainActivity_nativeInspectRealXex(env:JNIEnv,_:JObject,fd:jint)->jstring {
+    use std::io::Read;
+    if fd<0{return output(env,"FD invalido".into())}
+    let mut file=unsafe{File::from_raw_fd(fd)};
+    let mut data=Vec::new();
+    let result=file.take((crate::real_xex::MAX_XEX_BYTES+1) as u64).read_to_end(&mut data);
+    let msg=match result {Ok(_)=>crate::real_xex::format_report(&data).unwrap_or_else(|e|format!("XEX invalido: {e}")),Err(e)=>format!("Erro ao ler XEX: {e}")};
+    output(env,msg)
+}
