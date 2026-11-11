@@ -4,6 +4,7 @@
 pub mod audio;
 pub mod cpu;
 pub mod gpu;
+pub mod gpu3d;
 pub mod input;
 pub mod kernel;
 pub mod loader;
@@ -17,7 +18,7 @@ use kernel::Kernel;
 use memory::Memory;
 
 use jni::objects::JObject;
-use jni::sys::{jint, jintArray, jlong, jstring};
+use jni::sys::{jint, jintArray, jlong, jfloat, jstring};
 use jni::JNIEnv;
 
 pub const GPU_WIDTH: usize = 640;
@@ -39,9 +40,8 @@ impl Machine {
             memory: Memory::new(1024 * 1024),
             kernel: Kernel::new(),
             audio: Audio::new(48000, 48000),
-            gpu: Gpu::new(
-                GPU_WIDTH, GPU_HEIGHT
-            ).expect("GPU initialization failed"),
+            gpu: Gpu::new(GPU_WIDTH, GPU_HEIGHT)
+                .expect("GPU initialization failed"),
             controller: Controller::default(),
         }
     }
@@ -93,10 +93,10 @@ impl Machine {
             return Err("GPU framebuffer failed".into());
         }
 
-        let pixel = self.gpu.get_pixel(320, 180)
-            .map_err(str::to_string)?;
-
-        if pixel != [0, 220, 80, 255] {
+        if self.gpu.get_pixel(320, 180)
+            .map_err(str::to_string)?
+            != [0, 220, 80, 255]
+        {
             return Err("GPU pixel test failed".into());
         }
 
@@ -106,9 +106,7 @@ impl Machine {
     pub fn self_test() -> Result<String, String> {
         let mut machine = Self::new();
 
-        // addi r3,r0,42
-        // stw r3,64(r0)
-        // lwz r4,64(r0)
+        // PowerPC: addi, stw, lwz
         let program: [u8; 12] = [
             0x38, 0x60, 0x00, 0x2A,
             0x90, 0x60, 0x00, 0x40,
@@ -120,12 +118,10 @@ impl Machine {
 
         machine.run_steps(3)?;
 
-        if machine.cpu.gpr[3] != 42 {
-            return Err("CPU ADDI failed".into());
-        }
-
-        if machine.cpu.gpr[4] != 42 {
-            return Err("Memory LWZ/STW failed".into());
+        if machine.cpu.gpr[3] != 42
+            || machine.cpu.gpr[4] != 42
+        {
+            return Err("PowerPC test failed".into());
         }
 
         if machine.kernel.ticks() != 3 {
@@ -134,26 +130,33 @@ impl Machine {
 
         machine.gpu_test()?;
 
+        let cube = gpu3d::render_cube_frame(
+            GPU_WIDTH, GPU_HEIGHT, 0.4, 0.3
+        ).map_err(str::to_string)?;
+
+        if cube.len() != GPU_WIDTH * GPU_HEIGHT * 4 {
+            return Err("GPU 3D framebuffer failed".into());
+        }
+
         Ok(format!(
-            "X360 NEXUS v0.6.1 - PROJECT XENON\n\
+            "X360 NEXUS v0.7 - PROJECT XENON\n\
              Rust JNI: OK\n\
              CPU PowerPC: OK\n\
              Memoria LWZ/STW: OK\n\
              Registrador r4: {}\n\
              Kernel: {} ticks\n\
-             GPU framebuffer: OK\n\
-             GPU resolucao: {}x{}\n\
-             GPU frames: {}\n\
-             GPU renderizacao: OK\n\
-             GPU dinamica: disponivel\n\
-             Audio: experimental\n\
+             GPU 2D: OK\n\
+             GPU 3D: OK\n\
+             Z-buffer: disponivel\n\
+             Resolucao: {}x{}\n\
              Controles: Android virtual\n\
+             Audio: experimental\n\
+             Xenos real: nao implementado\n\
              Jogos comerciais: nao suportados",
             machine.cpu.gpr[4],
             machine.kernel.ticks(),
-            machine.gpu.width,
-            machine.gpu.height,
-            machine.gpu.frame_count()
+            GPU_WIDTH,
+            GPU_HEIGHT
         ))
     }
 }
@@ -164,43 +167,20 @@ impl Default for Machine {
     }
 }
 
-fn convert_argb(gpu: &Gpu) -> Vec<jint> {
-    gpu.framebuffer()
-        .chunks_exact(4)
+fn rgba_to_argb(rgba: &[u8]) -> Vec<jint> {
+    rgba.chunks_exact(4)
         .map(|p| {
             let r = p[0] as u32;
             let g = p[1] as u32;
             let b = p[2] as u32;
             let a = p[3] as u32;
 
-            ((a << 24) |
-             (r << 16) |
-             (g << 8) |
-             b) as jint
+            ((a << 24)
+                | (r << 16)
+                | (g << 8)
+                | b) as jint
         })
         .collect()
-}
-
-pub fn render_gpu_argb() -> Result<Vec<jint>, String> {
-    let mut gpu = Gpu::new(
-        GPU_WIDTH, GPU_HEIGHT
-    ).map_err(str::to_string)?;
-
-    gpu.render_test();
-    Ok(convert_argb(&gpu))
-}
-
-pub fn render_dynamic_argb(
-    x: usize,
-    y: usize,
-    tick: u64,
-) -> Result<Vec<jint>, String> {
-    let mut gpu = Gpu::new(
-        GPU_WIDTH, GPU_HEIGHT
-    ).map_err(str::to_string)?;
-
-    gpu.render_scene(x, y, tick);
-    Ok(convert_argb(&gpu))
 }
 
 fn make_java_array(
@@ -217,13 +197,49 @@ fn make_java_array(
         Err(_) => return std::ptr::null_mut(),
     };
 
-    if env.set_int_array_region(
-        &array, 0, pixels
-    ).is_err() {
+    if env.set_int_array_region(&array, 0, pixels).is_err() {
         return std::ptr::null_mut();
     }
 
     array.into_raw()
+}
+
+pub fn render_gpu_argb() -> Result<Vec<jint>, String> {
+    let mut gpu = Gpu::new(GPU_WIDTH, GPU_HEIGHT)
+        .map_err(str::to_string)?;
+
+    gpu.render_test();
+    Ok(rgba_to_argb(gpu.framebuffer()))
+}
+
+pub fn render_dynamic_argb(
+    x: usize,
+    y: usize,
+    tick: u64,
+) -> Result<Vec<jint>, String> {
+    let mut gpu = Gpu::new(GPU_WIDTH, GPU_HEIGHT)
+        .map_err(str::to_string)?;
+
+    gpu.render_scene(x, y, tick);
+    Ok(rgba_to_argb(gpu.framebuffer()))
+}
+
+pub fn render_3d_argb(
+    yaw: f32,
+    pitch: f32,
+) -> Result<Vec<jint>, String> {
+    if !yaw.is_finite() || !pitch.is_finite() {
+        return Err("Invalid camera angles".into());
+    }
+
+    let rgba = gpu3d::render_cube_frame(
+        GPU_WIDTH,
+        GPU_HEIGHT,
+        yaw,
+        pitch,
+    ).map_err(str::to_string)?;
+
+    Ok(rgba_to_argb(&rgba))
 }
 
 #[no_mangle]
@@ -290,6 +306,25 @@ Java_com_x360nexus_MainActivity_nativeGpuFrameDynamic(
     }
 }
 
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn
+Java_com_x360nexus_MainActivity_nativeGpu3DFrame(
+    env: JNIEnv,
+    _object: JObject,
+    yaw: jfloat,
+    pitch: jfloat,
+) -> jintArray {
+    let result = std::panic::catch_unwind(|| {
+        render_3d_argb(yaw, pitch)
+    });
+
+    match result {
+        Ok(Ok(pixels)) => make_java_array(&env, &pixels),
+        _ => std::ptr::null_mut(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,12 +333,11 @@ mod tests {
     fn machine_test() {
         let s = Machine::self_test().unwrap();
         assert!(s.contains("PowerPC: OK"));
-        assert!(s.contains("LWZ/STW: OK"));
-        assert!(s.contains("GPU framebuffer: OK"));
+        assert!(s.contains("GPU 3D: OK"));
     }
 
     #[test]
-    fn gpu_argb_test() {
+    fn gpu_2d_test() {
         let pixels = render_gpu_argb().unwrap();
 
         assert_eq!(
@@ -318,14 +352,16 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_gpu_test() {
-        let pixels = render_dynamic_argb(
-            100, 100, 5
-        ).unwrap();
+    fn gpu_3d_test() {
+        let pixels = render_3d_argb(0.4, 0.3).unwrap();
 
         assert_eq!(
-            pixels[110 * GPU_WIDTH + 110] as u32,
-            0xFF00DC50
+            pixels.len(),
+            GPU_WIDTH * GPU_HEIGHT
         );
+
+        assert!(pixels.iter().any(
+            |p| (*p as u32) != 0xFF060D0C
+        ));
     }
 }
