@@ -26,6 +26,10 @@ public class MainActivity extends Activity {
     private static final int HEIGHT = 360;
     private static final int SIZE = 48;
 
+    private static final int MODE_2D = 0;
+    private static final int MODE_3D = 1;
+    private static final int MODE_ADVANCED = 2;
+
     private static final boolean RUST_AVAILABLE;
 
     static {
@@ -47,6 +51,9 @@ public class MainActivity extends Activity {
     private native int[] nativeGpu3DFrame(
         float yaw, float pitch
     );
+    private native int[] nativeGpuAdvancedFrame(
+        float yaw, float pitch
+    );
 
     private TextView result;
     private TextView fpsText;
@@ -57,7 +64,7 @@ public class MainActivity extends Activity {
         new Handler(Looper.getMainLooper());
 
     private boolean running = false;
-    private boolean mode3D = false;
+    private int mode = MODE_2D;
 
     private int playerX = 296;
     private int playerY = 156;
@@ -94,6 +101,17 @@ public class MainActivity extends Activity {
         return b;
     }
 
+    private String modeName() {
+        switch (mode) {
+            case MODE_3D:
+                return "GPU 3D";
+            case MODE_ADVANCED:
+                return "GPU 3D ADVANCED";
+            default:
+                return "GPU 2D";
+        }
+    }
+
     private final Runnable frameLoop = new Runnable() {
         @Override
         public void run() {
@@ -104,7 +122,7 @@ public class MainActivity extends Activity {
             if (now - lastFrame >= 33) {
                 lastFrame = now;
 
-                if (mode3D) {
+                if (mode != MODE_2D) {
                     cameraYaw += 0.012f;
                     cameraYaw += dx * 0.025f;
                     cameraPitch += dy * 0.025f;
@@ -121,7 +139,6 @@ public class MainActivity extends Activity {
                             playerX + dx * 5
                         )
                     );
-
                     playerY = Math.max(
                         0,
                         Math.min(
@@ -143,10 +160,8 @@ public class MainActivity extends Activity {
                     fps = (int) (
                         fpsFrames * 1000L / elapsed
                     );
-
                     fpsFrames = 0;
                     fpsStart = now;
-
                     updateFps();
                 }
             }
@@ -158,9 +173,10 @@ public class MainActivity extends Activity {
     };
 
     private void updateFps() {
-        if (mode3D) {
+        if (mode != MODE_2D) {
             fpsText.setText(
-                "GPU 3D | FPS: " + fps +
+                modeName() +
+                " | FPS: " + fps +
                 " | Frame: " + tick +
                 "\nYaw: " +
                 String.format(
@@ -193,14 +209,24 @@ public class MainActivity extends Activity {
         try {
             int[] pixels;
 
-            if (mode3D) {
-                pixels = nativeGpu3DFrame(
-                    cameraYaw, cameraPitch
-                );
-            } else {
-                pixels = nativeGpuFrameDynamic(
-                    playerX, playerY, tick
-                );
+            switch (mode) {
+                case MODE_3D:
+                    pixels = nativeGpu3DFrame(
+                        cameraYaw, cameraPitch
+                    );
+                    break;
+
+                case MODE_ADVANCED:
+                    pixels = nativeGpuAdvancedFrame(
+                        cameraYaw, cameraPitch
+                    );
+                    break;
+
+                default:
+                    pixels = nativeGpuFrameDynamic(
+                        playerX, playerY, tick
+                    );
+                    break;
             }
 
             if (pixels == null ||
@@ -221,7 +247,6 @@ public class MainActivity extends Activity {
                 WIDTH,
                 HEIGHT
             );
-
             screen.invalidate();
 
         } catch (Throwable e) {
@@ -250,14 +275,35 @@ public class MainActivity extends Activity {
 
         handler.post(frameLoop);
 
+        String details;
+
+        switch (mode) {
+            case MODE_3D:
+                details =
+                    "GPU 3D experimental ativa.\n" +
+                    "Cubo giratorio e Z-buffer.\n" +
+                    "Setas controlam a camera.\n";
+                break;
+
+            case MODE_ADVANCED:
+                details =
+                    "GPU 3D avancada ativa.\n" +
+                    "Multiplos cubos 3D.\n" +
+                    "Texturas procedurais.\n" +
+                    "Iluminacao e Z-buffer.\n" +
+                    "Setas controlam a rotacao.\n";
+                break;
+
+            default:
+                details =
+                    "GPU 2D experimental ativa.\n" +
+                    "Setas movem o quadrado.\n";
+                break;
+        }
+
         result.setText(
-            "X360 NEXUS v0.7\n" +
-            (mode3D
-                ? "GPU 3D experimental ativa.\n" +
-                  "Cubo giratorio e Z-buffer.\n" +
-                  "Setas controlam a camera.\n"
-                : "GPU 2D experimental ativa.\n" +
-                  "Setas movem o quadrado.\n") +
+            "X360 NEXUS v0.8\n" +
+            details +
             "Backend: Rust software.\n" +
             "Xenos real: nao implementado."
         );
@@ -270,16 +316,13 @@ public class MainActivity extends Activity {
         handler.removeCallbacks(frameLoop);
     }
 
-    private void switchMode(boolean use3D) {
+    private void switchMode(int newMode) {
         stopAnimation();
 
-        mode3D = use3D;
+        mode = newMode;
         tick = 0;
-
-        if (mode3D) {
-            cameraYaw = 0.0f;
-            cameraPitch = 0.3f;
-        }
+        cameraYaw = 0.0f;
+        cameraPitch = 0.3f;
 
         startAnimation();
     }
@@ -317,25 +360,20 @@ public class MainActivity extends Activity {
         ScrollView scroll = new ScrollView(this);
         LinearLayout root = new LinearLayout(this);
 
-        root.setOrientation(
-            LinearLayout.VERTICAL
-        );
+        root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(24, 28, 24, 30);
         root.setBackgroundColor(
             Color.rgb(10, 17, 13)
         );
 
         root.addView(label(
-            "X360 NEXUS",
-            32,
-            green
+            "X360 NEXUS", 32, green
         ));
 
         root.addView(label(
-            "Android 0.7 - PROJECT XENON\n" +
+            "Android 0.8 - PROJECT XENON ADVANCED\n" +
             "PowerPC | GPU 2D/3D | FPS | Controles",
-            16,
-            Color.WHITE
+            16, Color.WHITE
         ));
 
         Button open = button(
@@ -358,6 +396,11 @@ public class MainActivity extends Activity {
         );
         root.addView(start3D);
 
+        Button advanced = button(
+            "INICIAR GPU 3D ADVANCED"
+        );
+        root.addView(advanced);
+
         Button pause = button(
             "PAUSAR GPU"
         );
@@ -365,16 +408,13 @@ public class MainActivity extends Activity {
 
         root.addView(label(
             "GPU EXPERIMENTAL - 640x360",
-            18,
-            green
+            18, green
         ));
 
         bitmap = Bitmap.createBitmap(
-            WIDTH,
-            HEIGHT,
+            WIDTH, HEIGHT,
             Bitmap.Config.ARGB_8888
         );
-
         bitmap.eraseColor(Color.BLACK);
 
         screen = new ImageView(this);
@@ -392,38 +432,32 @@ public class MainActivity extends Activity {
 
         fpsText = label(
             "GPU parada | FPS: 0",
-            16,
-            green
+            16, green
         );
         root.addView(fpsText);
 
         root.addView(label(
             "CONTROLES VIRTUAIS",
-            18,
-            green
+            18, green
         ));
 
         LinearLayout top = new LinearLayout(this);
         top.setGravity(Gravity.CENTER);
-
         top.addView(direction("▲", 0, -1));
         root.addView(top);
 
         LinearLayout middle = new LinearLayout(this);
         middle.setGravity(Gravity.CENTER);
-
         middle.addView(direction("◀", -1, 0));
         middle.addView(direction("▼", 0, 1));
         middle.addView(direction("▶", 1, 0));
-
         root.addView(middle);
 
         result = label(
-            "X360 Nexus v0.7 pronto.\n" +
-            "Selecione GPU 2D ou GPU 3D.\n" +
+            "X360 Nexus v0.8 pronto.\n" +
+            "Selecione GPU 2D, 3D ou Advanced.\n" +
             "Jogos comerciais nao suportados.",
-            16,
-            Color.LTGRAY
+            16, Color.LTGRAY
         );
         root.addView(result);
 
@@ -459,11 +493,15 @@ public class MainActivity extends Activity {
         });
 
         start2D.setOnClickListener(
-            v -> switchMode(false)
+            v -> switchMode(MODE_2D)
         );
 
         start3D.setOnClickListener(
-            v -> switchMode(true)
+            v -> switchMode(MODE_3D)
+        );
+
+        advanced.setOnClickListener(
+            v -> switchMode(MODE_ADVANCED)
         );
 
         pause.setOnClickListener(v -> {
