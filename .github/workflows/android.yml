@@ -4,10 +4,9 @@ on:
     branches:
       - feature/project-xenon-v4.1-galaxy
       - feature/project-xenon-v4.2
-      - feature/project-xenon-v4.1-galaxy
       - feature/project-xenon-v4.2-galaxy
       - feature/project-xenon-v4.9
-      - feature/project-xenon-v4.9
+      - feature/project-xenon-v5.0
   workflow_dispatch:
 permissions:
   contents: read
