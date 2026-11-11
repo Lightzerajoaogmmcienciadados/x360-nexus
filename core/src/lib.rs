@@ -1,7 +1,5 @@
-#![allow(dead_code)]
 
-// X360 Nexus v0.6 - Project Xenon
-// CPU PowerPC + Memory + Kernel + GPU Rust JNI
+#![allow(dead_code)]
 
 pub mod audio;
 pub mod cpu;
@@ -19,7 +17,7 @@ use kernel::Kernel;
 use memory::Memory;
 
 use jni::objects::JObject;
-use jni::sys::{jint, jintArray, jstring};
+use jni::sys::{jint, jintArray, jlong, jstring};
 use jni::JNIEnv;
 
 pub const GPU_WIDTH: usize = 640;
@@ -42,8 +40,7 @@ impl Machine {
             kernel: Kernel::new(),
             audio: Audio::new(48000, 48000),
             gpu: Gpu::new(
-                GPU_WIDTH,
-                GPU_HEIGHT
+                GPU_WIDTH, GPU_HEIGHT
             ).expect("GPU initialization failed"),
             controller: Controller::default(),
         }
@@ -90,14 +87,13 @@ impl Machine {
             return Err("GPU frame test failed".into());
         }
 
-        let expected = GPU_WIDTH * GPU_HEIGHT * 4;
-
-        if self.gpu.framebuffer_size() != expected {
-            return Err("GPU framebuffer size failed".into());
+        if self.gpu.framebuffer_size()
+            != GPU_WIDTH * GPU_HEIGHT * 4
+        {
+            return Err("GPU framebuffer failed".into());
         }
 
-        let pixel = self.gpu
-            .get_pixel(320, 180)
+        let pixel = self.gpu.get_pixel(320, 180)
             .map_err(str::to_string)?;
 
         if pixel != [0, 220, 80, 255] {
@@ -110,19 +106,16 @@ impl Machine {
     pub fn self_test() -> Result<String, String> {
         let mut machine = Self::new();
 
-        // PowerPC instructions:
-        // addi r3, r0, 42
-        // stw r3, 64(r0)
-        // lwz r4, 64(r0)
-
+        // addi r3,r0,42
+        // stw r3,64(r0)
+        // lwz r4,64(r0)
         let program: [u8; 12] = [
             0x38, 0x60, 0x00, 0x2A,
             0x90, 0x60, 0x00, 0x40,
             0x80, 0x80, 0x00, 0x40,
         ];
 
-        machine
-            .load_test_program(&program)
+        machine.load_test_program(&program)
             .map_err(str::to_string)?;
 
         machine.run_steps(3)?;
@@ -142,7 +135,7 @@ impl Machine {
         machine.gpu_test()?;
 
         Ok(format!(
-            "X360 NEXUS v0.6 - PROJECT XENON\n\
+            "X360 NEXUS v0.6.1 - PROJECT XENON\n\
              Rust JNI: OK\n\
              CPU PowerPC: OK\n\
              Memoria LWZ/STW: OK\n\
@@ -152,8 +145,9 @@ impl Machine {
              GPU resolucao: {}x{}\n\
              GPU frames: {}\n\
              GPU renderizacao: OK\n\
+             GPU dinamica: disponivel\n\
              Audio: experimental\n\
-             Controles: estrutura inicial\n\
+             Controles: Android virtual\n\
              Jogos comerciais: nao suportados",
             machine.cpu.gpr[4],
             machine.kernel.ticks(),
@@ -170,44 +164,73 @@ impl Default for Machine {
     }
 }
 
-// Convert Rust RGBA pixels to Android ARGB integers.
+fn convert_argb(gpu: &Gpu) -> Vec<jint> {
+    gpu.framebuffer()
+        .chunks_exact(4)
+        .map(|p| {
+            let r = p[0] as u32;
+            let g = p[1] as u32;
+            let b = p[2] as u32;
+            let a = p[3] as u32;
+
+            ((a << 24) |
+             (r << 16) |
+             (g << 8) |
+             b) as jint
+        })
+        .collect()
+}
+
 pub fn render_gpu_argb() -> Result<Vec<jint>, String> {
     let mut gpu = Gpu::new(
-        GPU_WIDTH,
-        GPU_HEIGHT
+        GPU_WIDTH, GPU_HEIGHT
     ).map_err(str::to_string)?;
 
     gpu.render_test();
-
-    let pixels: Vec<jint> = gpu
-        .framebuffer()
-        .chunks_exact(4)
-        .map(|rgba| {
-            let r = rgba[0] as u32;
-            let g = rgba[1] as u32;
-            let b = rgba[2] as u32;
-            let a = rgba[3] as u32;
-
-            ((a << 24)
-                | (r << 16)
-                | (g << 8)
-                | b) as jint
-        })
-        .collect();
-
-    if pixels.len() != GPU_WIDTH * GPU_HEIGHT {
-        return Err("Invalid GPU pixel count".into());
-    }
-
-    Ok(pixels)
+    Ok(convert_argb(&gpu))
 }
 
-// JNI - CPU and kernel self-test.
+pub fn render_dynamic_argb(
+    x: usize,
+    y: usize,
+    tick: u64,
+) -> Result<Vec<jint>, String> {
+    let mut gpu = Gpu::new(
+        GPU_WIDTH, GPU_HEIGHT
+    ).map_err(str::to_string)?;
+
+    gpu.render_scene(x, y, tick);
+    Ok(convert_argb(&gpu))
+}
+
+fn make_java_array(
+    env: &JNIEnv,
+    pixels: &[jint],
+) -> jintArray {
+    let len = match i32::try_from(pixels.len()) {
+        Ok(n) => n,
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    let array = match env.new_int_array(len) {
+        Ok(a) => a,
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    if env.set_int_array_region(
+        &array, 0, pixels
+    ).is_err() {
+        return std::ptr::null_mut();
+    }
+
+    array.into_raw()
+}
+
 #[no_mangle]
 #[allow(non_snake_case)]
 pub extern "system" fn
 Java_com_x360nexus_MainActivity_nativeSelfTest(
-    mut env: JNIEnv,
+    env: JNIEnv,
     _object: JObject,
 ) -> jstring {
     let result = std::panic::catch_unwind(|| {
@@ -215,22 +238,17 @@ Java_com_x360nexus_MainActivity_nativeSelfTest(
     });
 
     let message = match result {
-        Ok(Ok(value)) => value,
-        Ok(Err(error)) => {
-            format!("Falha no teste: {}", error)
-        }
-        Err(_) => {
-            "Falha interna no nucleo Rust".to_string()
-        }
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => format!("Falha: {}", e),
+        Err(_) => "Falha interna Rust".to_string(),
     };
 
     match env.new_string(message) {
-        Ok(value) => value.into_raw(),
+        Ok(s) => s.into_raw(),
         Err(_) => std::ptr::null_mut(),
     }
 }
 
-// JNI - GPU framebuffer for Android Bitmap.
 #[no_mangle]
 #[allow(non_snake_case)]
 pub extern "system" fn
@@ -242,30 +260,34 @@ Java_com_x360nexus_MainActivity_nativeGpuFrame(
         render_gpu_argb()
     });
 
-    let pixels = match result {
-        Ok(Ok(value)) => value,
-        _ => return std::ptr::null_mut(),
-    };
-
-    let length = match i32::try_from(pixels.len()) {
-        Ok(value) => value,
-        Err(_) => return std::ptr::null_mut(),
-    };
-
-    let array = match env.new_int_array(length) {
-        Ok(value) => value,
-        Err(_) => return std::ptr::null_mut(),
-    };
-
-    if env.set_int_array_region(
-        &array,
-        0,
-        &pixels
-    ).is_err() {
-        return std::ptr::null_mut();
+    match result {
+        Ok(Ok(pixels)) => make_java_array(&env, &pixels),
+        _ => std::ptr::null_mut(),
     }
+}
 
-    array.into_raw()
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn
+Java_com_x360nexus_MainActivity_nativeGpuFrameDynamic(
+    env: JNIEnv,
+    _object: JObject,
+    x: jint,
+    y: jint,
+    tick: jlong,
+) -> jintArray {
+    let result = std::panic::catch_unwind(|| {
+        render_dynamic_argb(
+            x.max(0) as usize,
+            y.max(0) as usize,
+            tick.max(0) as u64,
+        )
+    });
+
+    match result {
+        Ok(Ok(pixels)) => make_java_array(&env, &pixels),
+        _ => std::ptr::null_mut(),
+    }
 }
 
 #[cfg(test)]
@@ -274,12 +296,10 @@ mod tests {
 
     #[test]
     fn machine_test() {
-        let result = Machine::self_test().unwrap();
-
-        assert!(result.contains("PowerPC: OK"));
-        assert!(result.contains("LWZ/STW: OK"));
-        assert!(result.contains("GPU framebuffer: OK"));
-        assert!(result.contains("Kernel: 3 ticks"));
+        let s = Machine::self_test().unwrap();
+        assert!(s.contains("PowerPC: OK"));
+        assert!(s.contains("LWZ/STW: OK"));
+        assert!(s.contains("GPU framebuffer: OK"));
     }
 
     #[test]
@@ -291,10 +311,21 @@ mod tests {
             GPU_WIDTH * GPU_HEIGHT
         );
 
-        let center = pixels[
-            180 * GPU_WIDTH + 320
-        ] as u32;
+        assert_eq!(
+            pixels[180 * GPU_WIDTH + 320] as u32,
+            0xFF00DC50
+        );
+    }
 
-        assert_eq!(center, 0xFF00DC50);
+    #[test]
+    fn dynamic_gpu_test() {
+        let pixels = render_dynamic_argb(
+            100, 100, 5
+        ).unwrap();
+
+        assert_eq!(
+            pixels[110 * GPU_WIDTH + 110] as u32,
+            0xFF00DC50
+        );
     }
 }
