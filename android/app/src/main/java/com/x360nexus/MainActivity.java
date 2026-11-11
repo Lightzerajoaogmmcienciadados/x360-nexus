@@ -42,11 +42,11 @@ public class MainActivity extends Activity {
         root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(18,26,18,24);
         root.setBackground(new GalaxyBackground());
         root.addView(label("✕ PROJECT XENON",29,GREEN));
-        root.addView(label("4.3: MINECRAFT XEX ENGINE  •  Rust / PowerPC\nISO XDVDFS • Controles • OpenGL ES",15,Color.WHITE));
+        root.addView(label("4.4: XEX LOADER  •  Rust / PowerPC\nISO XDVDFS • Controles • OpenGL ES",15,Color.WHITE));
         root.addView(button("💿 SELECIONAR ISO",()->{
             Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("*/*");startActivityForResult(i,PICK_ISO);
         }));
-        root.addView(button("🔎 ANALISAR DEFAULT.XEX (MINECRAFT)",()->{
+        root.addView(button("🔎 ANALISAR CABEÇALHOS XEX2",()->{
             if(selectedIso==null){report("Selecione primeiro a ISO do jogo.");return;}
             if(!RUST){report("Rust indisponivel");return;}
             try(ParcelFileDescriptor pfd=getContentResolver().openFileDescriptor(selectedIso,"r")){
