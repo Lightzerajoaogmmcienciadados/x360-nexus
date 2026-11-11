@@ -19,6 +19,39 @@ impl Cpu {
     if (ins&1)!=0{self.lr=next as u64;}
     next=target as usize;
    },
+   
+   7 => {
+       // mulli: multiplicação por imediato
+       let imm = (ins as u16 as i16) as i64;
+       let value = self.gpr[ra] as i64;
+       self.gpr[rt] = value.wrapping_mul(imm) as u64;
+   },
+
+   8 => {
+       // subfic: imediato menos registrador
+       let imm = (ins as u16 as i16) as i64;
+       self.gpr[rt] =
+           (imm as u64).wrapping_sub(self.gpr[ra]);
+   },
+
+   12 => {
+       // addic: adição com imediato
+       let imm = (ins as u16 as i16) as i64;
+       self.gpr[rt] =
+           self.gpr[ra].wrapping_add(imm as u64);
+   },
+
+   26 => {
+       // xori: XOR imediato
+       self.gpr[ra] =
+           self.gpr[rt] ^ (ins as u16 as u64);
+   },
+
+   28 => {
+       // andi.: AND imediato
+       self.gpr[ra] =
+           self.gpr[rt] & (ins as u16 as u64);
+   },
    _=>return Err(format!("unsupported PowerPC opcode {op} at 0x{:X}",self.pc)),
   }
   self.pc=next;Ok(())
