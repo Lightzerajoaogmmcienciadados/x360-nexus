@@ -1,8 +1,11 @@
 name: X360 Nexus Android Rust JNI
 
+
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - feature/project-xenon-v0.6
   workflow_dispatch:
 
 permissions:
