@@ -6,7 +6,8 @@ on:
       - feature/project-xenon-v4.2
       - feature/project-xenon-v4.2-galaxy
       - feature/project-xenon-v4.9
-      - feature/project-xenon-v5.0
+      - feature/project-xenon-v5.1
+      - feature/project-xenon-v5.1
   workflow_dispatch:
 permissions:
   contents: read
