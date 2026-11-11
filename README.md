@@ -1,23 +1,19 @@
-# Project Xenon 4.6 — Execution Engine (experimental)
+# Project Xenon 4.7 — Kernel Homebrew Engine
 
-Full source project based on v4.5, with Rust sparse-memory PowerPC execution engine, JNI test button, and Android OpenGL ES demo for Mali GPUs.
+Base: versão 4.6, preservando ISO XDVDFS, análise XEX2, memória virtual, controles e interface Mali OpenGL ES.
 
-## What is implemented
-- Executes a **bounded, original PowerPC homebrew test** from mapped virtual memory.
-- Instructions: addi, addis, ori, xori, b, add, and a project-specific zero halt sentinel.
-- Tests memory access permissions, bounds, unsupported instructions, and infinite-loop execution budget.
-- Preserves XDVDFS and XEX metadata diagnostics, virtual controller, Android UI, and Mali-compatible OpenGL ES demo.
-- Android button **TESTAR EXECUTION ENGINE** calls Rust JNI.
+## Novo
+- Interpretador PowerPC experimental com instrução `sc` (`0x44000002`) e ABI **privada** para homebrews originais.
+- `r0=1`: retorna contador de ticks em `r3`; `r0=2`: retorna número de páginas em `r3`; `r0=3`: encerra execução com `r3=0`.
+- Teste Rust `kernel_demo()` e JNI `nativeKernelSelfTest()`, botão Android **TESTAR KERNEL HOMEBREW**.
+- Limite de execução e validação de acesso à memória preservados.
 
-## What is NOT implemented
-- **Minecraft Xbox 360 / commercial game execution is not supported.** XEX image decoding/decryption, imports, relocation, Xbox kernel, GPU Xenos and sound emulation are incomplete.
-- The OpenGL ES view is a demo, **not** a Xenos-to-Mali translator.
-- This package is source code, not a built or verified APK.
+## Limitações
+NÃO implementa o kernel Xbox 360, descriptografia XEX, GPU Xenos, nem execução de Minecraft Xbox 360 Edition. As chamadas `sc` são exclusivas deste projeto, não APIs Xbox 360.
 
-## Build
-1. Unzip into a repository branch `feature/project-xenon-v4.6` (preserve folders).
-2. GitHub Actions > Project Xenon Galaxy Android > Run workflow > select v4.6 branch.
-3. Download the resulting Android APK artifact if the workflow succeeds.
-4. Locally run `cargo test --manifest-path core/Cargo.toml` with Rust installed.
+## Compilar
+`cargo test --manifest-path core/Cargo.toml`
 
-The project is not affiliated with Minecraft, Microsoft or Xendroid.
+Para APK: envie o conteúdo desta pasta à branch `feature/project-xenon-v4.7` e execute `.github/workflows/android.yml` via GitHub Actions.
+
+Código-fonte fornecido sem APK pré-compilado; não testado em dispositivo neste ambiente.
