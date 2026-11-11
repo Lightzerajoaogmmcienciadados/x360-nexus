@@ -1,16 +1,21 @@
-# Project Xenon 4.3 — Minecraft XEX Engine
+# Project Xenon 4.4 — XEX Loader Diagnostics (Android + Rust)
 
-Projeto Android + Rust experimental, baseado no pacote 4.2 Mali Edition.
+**Base:** código-fonte v4.3 preservado e estendido.
 
-## Funcionalidade nova
-1. Selecione sua ISO XGD2/XDVDFS pelo seletor Android.
-2. Toque em **ANALISAR DEFAULT.XEX (MINECRAFT)**.
-3. O Rust localiza Default.xex na raiz da imagem, valida limites, lê até 64 KiB do cabeçalho e mostra campos XEX2.
+## Novo na 4.4
+- Leitura segura dos registros de cabeçalhos opcionais XEX2 em Rust.
+- Detecção de entry point e image base declarados, quando presentes.
+- Diagnóstico de chaves de cabeçalhos, validação de limites e testes unitários.
+- Interface Android atualizada, JNI da v4.3 preservado.
+- Workflow GitHub Actions incluído para compilação do APK Android arm64.
 
-Não extrai o arquivo completo, não descriptografa XEX e **não executa Minecraft Xbox 360 Edition**. A leitura é somente diagnóstico. Algumas variantes de ISO não são suportadas.
+## Como gerar o APK
+1. Extraia o ZIP e envie todos os arquivos ao repositório na branch desejada.
+2. Em GitHub Actions, execute o workflow **X360 Nexus Android Rust JNI** na mesma branch.
+3. Baixe o artefato APK da execução concluída.
 
-## Compilação
-Execute `cargo test --manifest-path core/Cargo.toml` e o workflow `.github/workflows/android.yml` no GitHub Actions para gerar o APK. O workflow deve ser executado na branch onde estes arquivos foram enviados.
-
-## Hardware
-Interface Android usa OpenGL ES experimental e pode ser testada na Mali-G57 MC2; isto não implementa GPU Xenos.
+## Limites
+Não há descriptografia, descompressão, relocação, mapeamento de memória executável, implementação de imports Xbox 360 nem execução de Minecraft.
+O número chamado `header_size` na versão anterior é o offset de imagem XEX, não um tamanho de cabeçalho confirmado.
+OpenGL ES 2.0 é usado para a interface; **não** traduz comandos da GPU Xenos para Mali.
+Este ZIP é código-fonte e não um APK.
