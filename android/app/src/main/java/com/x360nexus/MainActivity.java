@@ -28,6 +28,9 @@ import android.media.AudioManager;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.InputStream;
+import java.io.ByteArrayOutputStream;
+import android.view.WindowInsets;
+import android.os.Build;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Locale;
@@ -59,12 +62,14 @@ public final class MainActivity extends Activity {
     private native String nativeRunDemo();
     private native String nativeInspectIso(int fileDescriptor);
     private native String nativeInspectXex(byte[] bytes);
+    private native String nativeExecuteRawPpc(byte[] bytes);
     private native void nativeSetButton(int mask, boolean pressed);
     private native void nativeSetAxis(int axis,int value);
     private native String nativePadStatus();
     private native int nativeGenerateAudio(short[] samples,int frequency,int rate);
 
     private LinearLayout shell, content, tabs;
+    private ScrollView scrollView;
     private GalaxySurface surface;
     private TextView padStatus;
     private int tabIndex = 0;
@@ -127,21 +132,34 @@ public final class MainActivity extends Activity {
         getWindow().setNavigationBarColor(BG);
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
         shell=linear(false);shell.setBackgroundColor(BG);
+        // Android 15+ draws content edge-to-edge: reserve both system-bar insets
+        // so the title and bottom navigation never sit beneath gesture/status bars.
+        if (Build.VERSION.SDK_INT >= 30) {
+            getWindow().setDecorFitsSystemWindows(false);
+            shell.setOnApplyWindowInsetsListener((view, windowInsets) -> {
+                android.graphics.Insets bars =
+                    windowInsets.getInsets(WindowInsets.Type.systemBars());
+                view.setPadding(bars.left,bars.top,bars.right,bars.bottom);
+                return windowInsets;
+            });
+        } else {
+            shell.setFitsSystemWindows(true);
+        }
         LinearLayout top=linear(false);top.setPadding(dp(18),dp(17),dp(18),dp(12));
         add(top,text("X360  NEXUS",21,GREEN,true),0);
         add(top,text("NATIVE  •  EXPERIMENTAL  •  RUST / ANDROID",11,MUTED,true),4);
         shell.addView(top,new LinearLayout.LayoutParams(-1,-2));
 
-        ScrollView scroll=new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setVerticalScrollBarEnabled(false);
+        scrollView=new ScrollView(this);
+        scrollView.setFillViewport(true);
+        scrollView.setVerticalScrollBarEnabled(false);
         content=linear(false);
         content.setPadding(dp(18),dp(8),dp(18),dp(18));
-        scroll.addView(content);
-        shell.addView(scroll,new LinearLayout.LayoutParams(-1,0,1f));
+        scrollView.addView(content);
+        shell.addView(scrollView,new LinearLayout.LayoutParams(-1,0,1f));
 
-        tabs=linear(true);tabs.setBackgroundColor(Color.rgb(9,28,17));
-        tabs.setPadding(dp(5),dp(5),dp(5),dp(6));
+        tabs=linear(true);tabs.setBackgroundColor(Color.rgb(22,54,35));
+        tabs.setPadding(dp(5),dp(9),dp(5),dp(9));
         shell.addView(tabs,new LinearLayout.LayoutParams(-1,-2));
         setContentView(shell);
         showTab(0);
@@ -151,7 +169,7 @@ public final class MainActivity extends Activity {
         tabIndex=index;content.removeAllViews();tabs.removeAllViews();
         for(int i=0;i<TABS.length;i++) {
             final int selected=i;
-            TextView b=text(TABS[i],11,i==index?GREEN:MUTED,i==index);
+            TextView b=text(TABS[i],12,i==index?GREEN:Color.rgb(209,228,211),i==index);
             b.setGravity(Gravity.CENTER);b.setPadding(dp(2),dp(16),dp(2),dp(16));
             b.setOnClickListener(v->showTab(selected));
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-2,1f);
@@ -164,6 +182,8 @@ public final class MainActivity extends Activity {
             case 3:controllers();break;
             default:about();break;
         }
+        // Changing tab must not preserve the previous page's scroll position.
+        if(scrollView!=null)scrollView.post(()->scrollView.scrollTo(0,0));
     }
     private void home() {
         heading("Projeto Xenon","Interface nativa Android, com código Rust integrado via JNI.");
@@ -214,7 +234,7 @@ public final class MainActivity extends Activity {
         });
     }
     private void library() {
-        heading("Biblioteca local","Abra backups próprios e veja metadados. Importar não significa executar.");
+        heading("Biblioteca local","ISO: leitura XDVDFS e análise do default.xex. PPC bruto: execução isolada de diagnóstico. Jogos Xbox 360 ainda indisponíveis.");
         LinearLayout pick=panel("IMPORTAR ISO / XEX / STFS / GOD / XBLA",
             "Armazena URI e metadados localmente. Não envia o arquivo à internet.");
         add(content,pick,15);
@@ -242,6 +262,13 @@ public final class MainActivity extends Activity {
             add(content,card,12);
             Button remove=outlined("Remover da biblioteca");
             add(card,remove,10);
+            if(name.toLowerCase(Locale.ROOT).endsWith(".ppcbin")
+                || name.toLowerCase(Locale.ROOT).endsWith(".nxpp")
+                || name.toLowerCase(Locale.ROOT).endsWith(".ppc")) {
+                Button execute=button("Executar código PowerPC experimental");
+                add(card,execute,10);
+                execute.setOnClickListener(v->runRawPpc(Uri.parse(uri),card));
+            }
             remove.setOnClickListener(v->{
                 JSONArray arr=loadLibrary(),next=new JSONArray();
                 for(int k=0;k<arr.length();k++){
@@ -252,9 +279,35 @@ public final class MainActivity extends Activity {
             });
         }
         LinearLayout note=panel("EXECUÇÃO DE JOGOS",
-            "O carregador identifica algumas estruturas ISO/XDVDFS e XEX2, mas o núcleo NÃO executa jogos comerciais de Xbox 360.");
+            "Agora o carregador também lê o cabeçalho de default.xex dentro das ISOs XDVDFS. Isso ainda não implementa decriptação, mapeamento ou inicialização de jogos comerciais.");
         add(content,note,14);
     }
+    /** Optional homebrew format: bare, big-endian, 4-byte PowerPC instructions. */
+    private void runRawPpc(Uri file,LinearLayout card) {
+        TextView output=text("Executando programa PPC isolado...",13,LIGHT,false);
+        add(card,output,8);
+        new Thread(()->{
+            String report;
+            try {
+                if(!RUST_AVAILABLE)throw new IOException("Nucleo Rust indisponivel");
+                ByteArrayOutputStream data=new ByteArrayOutputStream();
+                try(InputStream input=getContentResolver().openInputStream(file)){
+                    if(input==null)throw new IOException("Nao foi possivel abrir arquivo");
+                    byte[] temp=new byte[4096];
+                    int n;
+                    while((n=input.read(temp))!=-1){
+                        if(n==0)continue;
+                        if(data.size()+n>65536)throw new IOException("Codigo PPC limitado a 64 KB");
+                        data.write(temp,0,n);
+                    }
+                }
+                report=nativeExecuteRawPpc(data.toByteArray());
+            }catch(Throwable err){report="Erro: "+err.getMessage();}
+            final String message=report;
+            runOnUiThread(()->output.setText(message));
+        },"x360-ppc-sandbox").start();
+    }
+
     private JSONArray loadLibrary() {
         try {
             String value=getPreferences(MODE_PRIVATE).getString("library","[]");
@@ -357,9 +410,9 @@ public final class MainActivity extends Activity {
         return super.onGenericMotionEvent(event);
     }
     private void about() {
-        heading("Sobre o X360 Nexus","Build Android 6.0 • Experimental nativo");
+        heading("Sobre o X360 Nexus","Build Android 6.1 • Experimental nativo");
         status("ARQUITETURA","Android SDK + OpenGL ES 2.0 + AudioTrack + Rust JNI aarch64.");
-        status("SUPORTE ATUAL","Inspeção ISO/XDVDFS, análise de cabeçalho XEX2, biblioteca local, controles Android, núcleo CPU PowerPC subset, GPU experimental e áudio PCM de diagnóstico.");
+        status("SUPORTE ATUAL","Inspeção ISO/XDVDFS incluindo default.xex, diagnóstico XEX2, execução isolada de programas PPC brutos, biblioteca local, controles Android, núcleo CPU experimental, GPU diagnóstica e áudio PCM.");
         status("LIMITAÇÕES IMPORTANTES","Sem JIT PPC, MMU Xbox completa, APIs XAM/Xbox Kernel, decodificador XMA, tradutor Xenos, renderização 360 e execução de jogos comerciais.");
         status("PRIVACIDADE","Arquivos escolhidos permanecem no aparelho. A biblioteca guarda URIs locais, nomes, tamanhos e resultados de inspeção.");
     }

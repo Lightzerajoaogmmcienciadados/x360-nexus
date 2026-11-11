@@ -56,3 +56,104 @@ pub fn inspect_xex(data:&[u8])->Result<XexInfo,String>{
  #[test]fn iso(){let mut v=vec![0;131072];v[65536..65556].copy_from_slice(MAGIC);v[67564..67584].copy_from_slice(MAGIC);v[65556..65560].copy_from_slice(&33u32.to_le_bytes());v[65560..65564].copy_from_slice(&32u32.to_le_bytes());assert_eq!(inspect_iso(&mut Cursor::new(v)).unwrap().root_sector,33)}
  #[test]fn xex(){let mut v=vec![0;24];v[..4].copy_from_slice(b"XEX2");assert!(inspect_xex(&v).is_ok())}
 }
+
+
+/// Result of locating and inspecting the XEX2 header inside an XDVDFS disc image.
+/// This is metadata inspection only; it does NOT decrypt, map or execute a game.
+#[derive(Debug, Clone)]
+pub struct DiscXexInfo {
+    pub name: String,
+    pub file_size: u32,
+    pub file_offset: u64,
+    pub xex: XexInfo,
+}
+
+/// Scans the already validated root directory for default.xex, then reads a
+/// bounded header directly from the user's ISO without copying the whole disc.
+pub fn inspect_disc_default_xex<R: Read + Seek>(
+    reader: &mut R,
+    iso: &IsoInfo,
+    entries: &[DiscEntry],
+) -> Result<Option<DiscXexInfo>, String> {
+    let candidate = entries.iter().find(|entry| {
+        !entry.is_directory && entry.name.eq_ignore_ascii_case("default.xex")
+    });
+    let entry = match candidate {
+        Some(found) => found,
+        None => return Ok(None),
+    };
+    if entry.size < 24 {
+        return Err("default.xex menor que um cabecalho XEX2".into());
+    }
+    let offset = iso.partition
+        .checked_add((entry.start_sector as u64).checked_mul(SECTOR)
+            .ok_or("Setor XEX fora do limite")?)
+        .ok_or("Posicao de XEX fora do limite")?;
+    let end = offset.checked_add(entry.size as u64)
+        .ok_or("Tamanho XEX invalido")?;
+    if end > iso.image_size {
+        return Err("O arquivo XEX ultrapassa os limites da ISO".into());
+    }
+    let read_len = (entry.size as usize).min(4096);
+    let mut header = vec![0u8; read_len];
+    reader.seek(SeekFrom::Start(offset)).map_err(|e|e.to_string())?;
+    reader.read_exact(&mut header).map_err(|e|e.to_string())?;
+    let xex = inspect_xex(&header)?;
+    Ok(Some(DiscXexInfo {
+        name: entry.name.clone(),
+        file_size: entry.size,
+        file_offset: offset,
+        xex,
+    }))
+}
+
+#[cfg(test)]
+mod disc_boot_tests {
+    use super::*;
+    use std::io::Cursor;
+    fn disc() -> (Vec<u8>, IsoInfo, Vec<DiscEntry>) {
+        let mut bytes = vec![0u8; 131072];
+        bytes[65536..65556].copy_from_slice(MAGIC);
+        bytes[67564..67584].copy_from_slice(MAGIC);
+        bytes[65556..65560].copy_from_slice(&33u32.to_le_bytes());
+        bytes[65560..65564].copy_from_slice(&32u32.to_le_bytes());
+        // The root record points to the next sector, not to the directory itself.
+        let rec = 33 * 2048;
+        bytes[rec + 4..rec + 8].copy_from_slice(&34u32.to_le_bytes());
+        bytes[rec + 8..rec + 12].copy_from_slice(&512u32.to_le_bytes());
+        bytes[rec + 13] = 11;
+        bytes[rec + 14..rec + 25].copy_from_slice(b"default.xex");
+        let xex_offset = 34 * 2048;
+        bytes[xex_offset..xex_offset + 4].copy_from_slice(b"XEX2");
+        bytes[xex_offset + 8..xex_offset + 12].copy_from_slice(&0x180u32.to_be_bytes());
+        let mut reader = Cursor::new(bytes.clone());
+        let info = inspect_iso(&mut reader).unwrap();
+        let entries = root_entries(&mut reader, &info).unwrap();
+        (bytes, info, entries)
+    }
+    #[test]
+    fn discovers_default_xex_inside_iso_without_reading_full_disc() {
+        let (bytes, info, entries) = disc();
+        let mut reader = Cursor::new(bytes);
+        let xex = inspect_disc_default_xex(&mut reader, &info, &entries).unwrap().unwrap();
+        assert_eq!(xex.name, "default.xex");
+        assert_eq!(xex.file_size, 512);
+        assert_eq!(xex.file_offset, 34 * 2048);
+        assert_eq!(xex.xex.header_size, 0x180);
+    }
+    #[test]
+    fn rejects_xex_file_extent_outside_disc() {
+        let (bytes, info, mut entries) = disc();
+        entries[0].start_sector = 150;
+        let mut reader = Cursor::new(bytes);
+        assert!(inspect_disc_default_xex(&mut reader, &info, &entries).is_err());
+    }
+    #[test]
+    fn no_default_xex_is_not_falsely_reported() {
+        let (bytes, info, mut entries) = disc();
+        entries[0].name = "other.xex".into();
+        assert!(inspect_disc_default_xex(
+            &mut Cursor::new(bytes), &info, &entries
+        ).unwrap().is_none());
+    }
+}

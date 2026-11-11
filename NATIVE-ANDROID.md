@@ -1,4 +1,4 @@
-# X360 Nexus — Native Android Experimental (6.0)
+# X360 Nexus — Native Android Experimental (6.1)
 
 Native Android APK: Java/Android SDK, OpenGL ES 2, Android AudioTrack and Rust JNI (ARM64-v8a).
 
@@ -9,7 +9,9 @@ Native Android APK: Java/Android SDK, OpenGL ES 2, Android AudioTrack and Rust J
 - **Audio:** original PCM tone generated in Rust and played with Android AudioTrack. No Xbox XMA decoder.
 - **Memory & kernel:** basic sandboxed guest memory, tiny test thread scheduler/ticks.
 - **Controls:** touch virtual buttons, gamepad key events and Android joystick axes, saved in Rust controller state.
-- **Library:** Android document picker; persisted URI/name/size; read-only XDVDFS ISO discovery, XEX2 header checks, without copying huge discs.
+- **Library:** Android document picker; persisted URI/name/size; read-only XDVDFS ISO discovery, root `default.xex` file-offset and XEX2-header inspection, without copying huge discs.
+- **Homebrew diagnostics:** opt-in execution of **raw big-endian PowerPC instructions** from `.ppc`, `.ppcbin`, `.nxpp` (64 KiB max, 20,000 instructions, simple sandbox; not XEX execution).
+- **UI:** Android 15+ system bar insets, proper bottom navigation contrast and scroll reset on tab changes.
 - **UI:** five native Android tabs, no WebView or HTML.
 
 ## Not yet implemented
@@ -20,7 +22,7 @@ Xbox kernel services, XMA decoding and compatibility for Forza/Minecraft.
 
 ## Build
 
-GitHub Actions: `.github/workflows/x360-native-android.yml`, branch `feature/x360-nexus-native-0.4`.
+GitHub Actions: `.github/workflows/x360-native-android-v61.yml`, branch `feature/x360-nexus-native-0.5`.
 
 `cargo test --manifest-path core/Cargo.toml`
 

@@ -6,8 +6,8 @@ android {
         applicationId 'com.x360nexus'
         minSdk 26
         targetSdk 35
-        versionCode 60
-        versionName '6.0-native-experimental'
+        versionCode 61
+        versionName '6.1-native-experimental'
         ndk { abiFilters 'arm64-v8a' }
     }
     compileOptions {

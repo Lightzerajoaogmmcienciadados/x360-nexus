@@ -11,7 +11,19 @@ fn output(mut env:JNIEnv,msg:String)->jstring{env.new_string(msg).map(|s|s.into_
  let mut f=unsafe{File::from_raw_fd(fd)};
  let msg=match loader::inspect_iso(&mut f){Ok(i)=>{
   let names=match loader::root_entries(&mut f,&i){Ok(entries)=>entries.iter().take(40).map(|e|format!("{} {} ({} bytes)",if e.is_directory{"[DIR]"}else{"[FILE]"},e.name,e.size)).collect::<Vec<_>>().join("\n"),Err(e)=>format!("Diretorio nao lido: {e}")};
-  format!("XDVDFS detectado: {}\nImagem: {} bytes\nParticao: 0x{:X}\nRaiz: setor {}\n\n{}\n\nExecucao comercial ainda indisponivel",i.layout,i.image_size,i.partition,i.root_sector,names)
+  let boot = match loader::root_entries(&mut f, &i) {
+    Ok(entries) => match loader::inspect_disc_default_xex(&mut f, &i, &entries) {
+      Ok(Some(xex)) => format!(
+        "\n\nXEX2 PRINCIPAL ENCONTRADO\nArquivo: {}\nTamanho: {} bytes\nOffset: 0x{:X}\nCabecalho: {} bytes\nOpcoes: {}",
+        xex.name, xex.file_size, xex.file_offset, xex.xex.header_size, xex.xex.optional_headers
+      ),
+      Ok(None) => "\n\nNenhum default.xex encontrado na raiz".into(),
+      Err(err) => format!("\n\nFalha no default.xex: {err}"),
+    },
+    Err(err) => format!("\n\nFalha ao ler diretorio: {err}"),
+  };
+  format!("XDVDFS detectado: {}\nImagem: {} bytes\nParticao: 0x{:X}\nRaiz: setor {}\n\n{}{}\n\nLeitura real de cabecalho concluida; jogos comerciais ainda nao executaveis",
+    i.layout,i.image_size,i.partition,i.root_sector,names,boot)
  },Err(e)=>format!("ISO nao reconhecida: {e}")};output(env,msg)
 }
 #[no_mangle]pub extern "system" fn Java_com_x360nexus_MainActivity_nativeRunDemo(env:JNIEnv,_:JObject)->jstring{output(env,crate::galaxy::run_demo().unwrap_or_else(|e|format!("Erro: {e}")))}

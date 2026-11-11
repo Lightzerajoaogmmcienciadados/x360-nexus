@@ -41,3 +41,64 @@ pub extern "system" fn Java_com_x360nexus_MainActivity_nativeGenerateAudio(
     if env.set_short_array_region(&samples,0,&buffer).is_err() { return -1; }
     len as jint
 }
+
+
+/// Run raw big-endian PowerPC instructions in a small, isolated *diagnostic*
+/// machine, with an instruction budget. Not an XEX boot or Xbox 360 runtime.
+pub fn execute_raw_powerpc(program: &[u8], max_steps: usize) -> Result<String, String> {
+    if program.is_empty() || program.len() > 64 * 1024 || program.len() % 4 != 0 {
+        return Err("Programa PPC deve ter 4 a 65536 bytes, alinhados a 4".into());
+    }
+    if max_steps == 0 || max_steps > 20_000 {
+        return Err("Orcamento de instrucoes invalido".into());
+    }
+    let mut machine = crate::Machine::new();
+    machine.load_test_program(program).map_err(str::to_string)?;
+    let mut executed = 0;
+    while executed < max_steps {
+        if machine.cpu.pc == program.len() { break; }
+        if machine.cpu.pc > program.len() {
+            return Err(format!("Salto alem do codigo em 0x{:X}", machine.cpu.pc));
+        }
+        machine.step()?;
+        executed += 1;
+    }
+    if machine.cpu.pc != program.len() {
+        return Err(format!("Limite de {max_steps} instrucoes atingido (PC=0x{:X})",machine.cpu.pc));
+    }
+    Ok(format!(
+        "Programa PPC experimental concluido\nInstrucoes: {}\nPC: 0x{:X}\nr3={} r4={} r5={}\nKernel ticks={}\nSem APIs de jogos Xbox 360",
+        executed, machine.cpu.pc, machine.cpu.gpr[3], machine.cpu.gpr[4],
+        machine.cpu.gpr[5], machine.kernel.ticks(),
+    ))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_x360nexus_MainActivity_nativeExecuteRawPpc(
+    mut env: JNIEnv, _: JObject, data: JByteArray
+) -> jstring {
+    let msg = match env.convert_byte_array(data) {
+        Ok(program) => execute_raw_powerpc(&program, 20_000)
+            .unwrap_or_else(|e| format!("Erro no programa PowerPC: {e}")),
+        Err(err) => format!("Arquivo PPC invalido: {err}"),
+    };
+    jstr(env, msg)
+}
+
+#[cfg(test)]
+mod raw_ppc_tests {
+    use super::*;
+    #[test] fn executes_original_raw_ppc_instructions() {
+        let bytes = [0x38,0x60,0,42, 0x38,0x83,0,8];
+        let result = execute_raw_powerpc(&bytes,100).unwrap();
+        assert!(result.contains("r3=42"));
+        assert!(result.contains("r4=50"));
+    }
+    #[test] fn infinite_branch_respects_instruction_budget() {
+        let loop_bytes=[0x48,0,0,0];
+        assert!(execute_raw_powerpc(&loop_bytes,5).unwrap_err().contains("Limite"));
+    }
+    #[test] fn refuses_unaligned_program() {
+        assert!(execute_raw_powerpc(&[1,2,3],20).is_err());
+    }
+}
