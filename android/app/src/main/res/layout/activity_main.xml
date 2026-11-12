@@ -8,8 +8,34 @@
             android:text="X360 NEXUS" android:textSize="30sp" android:textStyle="bold"
             android:textColor="#2ECC71" android:paddingBottom="4dp" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:text="GALAXY / PROJECT XENON 4.5  •  EXPERIMENTAL"
+            android:text="GALAXY / PROJECT XENON 5.0  •  EXPERIMENTAL"
             android:textColor="#B7C1BD" android:textSize="12sp" android:paddingBottom="14dp" />
+        <FrameLayout android:layout_width="match_parent" android:layout_height="220dp"
+            android:layout_marginBottom="10dp" android:background="@drawable/nexus_card">
+            <SurfaceView android:id="@+id/videoSurface" android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_gravity="top" android:background="#BB101319"
+                android:text="V5.0 • PRÉ-VISUALIZAÇÃO GLES (NÃO É IMAGEM DO JOGO)"
+                android:textSize="10sp" android:textColor="#2ECC71" android:padding="6dp" />
+        </FrameLayout>
+        <TextView android:id="@+id/videoStats" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginBottom="6dp" android:text="GLES aguardando SurfaceView • sem tradução Xenos"
+            android:textColor="#88CC99" android:textSize="11sp" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:gravity="center" android:orientation="horizontal">
+            <Button android:id="@+id/padLeft" android:layout_width="0dp" android:layout_weight="1" android:layout_height="52dp"
+                android:text="◀" android:contentDescription="Controle digital esquerda" android:textColor="#FFFFFF" android:backgroundTint="#34383E" />
+            <Button android:id="@+id/padRight" android:layout_width="0dp" android:layout_weight="1" android:layout_height="52dp"
+                android:text="▶" android:contentDescription="Controle digital direita" android:textColor="#FFFFFF" android:backgroundTint="#34383E" />
+            <Button android:id="@+id/padA" android:layout_width="0dp" android:layout_weight="1" android:layout_height="52dp"
+                android:text="A" android:contentDescription="Controle A" android:textColor="#FFFFFF" android:backgroundTint="#107C10" />
+            <Button android:id="@+id/padB" android:layout_width="0dp" android:layout_weight="1" android:layout_height="52dp"
+                android:text="B" android:contentDescription="Controle B" android:textColor="#FFFFFF" android:backgroundTint="#34383E" />
+        </LinearLayout>
+        <Button android:id="@+id/pm4Demo" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="TESTAR DECODIFICADOR PM4 (DADOS SINTÉTICOS)" android:textSize="12sp"
+            android:textColor="#FFFFFF" android:backgroundTint="#26382C" />
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
             android:orientation="vertical" android:background="@drawable/nexus_card" android:padding="14dp">
             <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -78,7 +104,7 @@
             android:fontFamily="monospace" android:textSize="12sp" android:textColor="#C0E3C8"
             android:text="Logs da CPU / XEX / HLE…" android:textIsSelectable="true" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:text="Modo experimental: interpretar instruções não equivale a executar jogos comerciais. A GPU Xenos e o kernel Xbox 360 ainda não são emulados."
+            android:text="Modo experimental: interpretar instruções não equivale a executar jogos comerciais. A tradução Xenos, o kernel comercial e a execução de jogos ainda não estão completos."
             android:textSize="11sp" android:textColor="#A4ACAA" android:paddingTop="12dp" />
     </LinearLayout>
 </ScrollView>
