@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(x360_xdvdfs_android LANGUAGES CXX)
-add_library(x360xdvdfs SHARED xdvdfs.cpp xex_loader.cpp xex_crypto.cpp jni_bridge.cpp)
+add_library(x360xdvdfs SHARED xdvdfs.cpp xex_loader.cpp xex_crypto.cpp xex_lzx.cpp jni_bridge.cpp)
 target_compile_features(x360xdvdfs PRIVATE cxx_std_20)
 target_compile_options(x360xdvdfs PRIVATE -Wall -Wextra -Wpedantic)
 find_library(android_log log)

@@ -14,13 +14,14 @@ import android.widget.ScrollView
 import android.widget.TextView
 import java.util.concurrent.Executors
 
-/** X360 Nexus v4.3: XDVDFS, XEX2 metadata, PE32 mapping and bounded PPC trace.
- *  Does not decrypt retail titles, implement Xenos, or run commercial games.
+/** X360 Nexus v4.4: XDVDFS, optional user-supplied key, LZX, and bounded PPC trace.
+ * No key is included or persisted; this is not a full Xbox 360 emulator.
  */
 class MainActivity : Activity() {
     companion object {
         private const val PICK_ISO = 100
         private const val SAVE_XEX = 101
+        private const val PICK_KEY = 102
         private val GREEN = Color.rgb(30, 210, 95)
         private val RUST_READY: Boolean
         private val XDVDFS_READY: Boolean
@@ -44,6 +45,8 @@ class MainActivity : Activity() {
     private external fun nativePreparedEntryPoint(): Long
     private external fun nativeFetchCodeWindow(address: Long, length: Int): ByteArray?
     private external fun nativeTracePpc(bytes: ByteArray, guestPc: Long, steps: Int): String
+    private external fun nativeSetXexKey(key: ByteArray): String
+    private external fun nativeClearXexKey(): String
 
     private val worker = Executors.newSingleThreadExecutor()
     private val buttons = mutableListOf<Button>()
@@ -94,8 +97,8 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.rgb(7, 15, 20))
         }
         root.addView(text("PROJECT XENON", 32f, GREEN))
-        root.addView(text("4.3: GALAXY | X360 Nexus Android\nXDVDFS + XEX2 + PowerPC Trace", 17f, Color.WHITE))
-        root.addView(text("PE32 • CPU diagnostica • HLE experimental", 17f, GREEN))
+        root.addView(text("4.4: GALAXY | X360 Nexus Android\nXDVDFS + XEX2 + PowerPC Trace", 17f, Color.WHITE))
+        root.addView(text("PE32 • AES externo • LZX • CPU diagnostica", 17f, GREEN))
 
         button("1. SELECIONAR ISO", root) {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -118,6 +121,18 @@ class MainActivity : Activity() {
                 putExtra(Intent.EXTRA_TITLE, "default.xex")
             }, SAVE_XEX)
         }
+        button("CARREGAR CHAVE XEX (keys.bin)", root) {
+            if (busy) return@button
+            // SAF: no storage permission, no persistence of the selected key URI.
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "application/octet-stream"
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }, PICK_KEY)
+        }
+        button("DESCARTAR CHAVE XEX", root) {
+            if (!busy && XDVDFS_READY) show(nativeClearXexKey())
+        }
         button("ANALISAR CABECALHOS XEX2", root) {
             if (!XDVDFS_READY) { show("Nucleo C++ indisponivel"); return@button }
             try { show(nativeInspectStagedXex()) } catch (e: Throwable) { show("Erro XEX: ${e.message}") }
@@ -132,7 +147,7 @@ class MainActivity : Activity() {
                     val status = nativePrepareStagedXex()
                     val entry = nativePreparedEntryPoint()
                     if (entry == 0L) {
-                        "$status\n\nExecucao impedida: sem PE pronto / sem chave / sem LZX."
+                        "$status\n\nTRACE indisponivel: PE nao validado/mapeado; verifique o diagnostico acima."
                     } else {
                         // No more than 256 bytes are copied to the bounded Rust interpreter.
                         val code = listOf(256, 128, 64, 32, 16, 8, 4)
@@ -153,10 +168,10 @@ class MainActivity : Activity() {
             if (RUST_READY) show(nativeSelfTest()) else show("Nucleo Rust indisponivel")
         }
 
-        result = text("X360 Nexus v4.3\n\nRust JNI: " + (if (RUST_READY) "OK" else "Indisponivel") +
+        result = text("X360 Nexus v4.4\n\nRust JNI: " + (if (RUST_READY) "OK" else "Indisponivel") +
             "\nC++ JNI: " + (if (XDVDFS_READY) "OK" else "Indisponivel") +
             "\n\nPara testar: selecione ISO -> carregue default.xex -> analise XEX -> trace.\n" +
-            "XEX Retail criptografado/LZX sera identificado, mas nao executado.\n" +
+            "Chave externa em memoria e descompressor LZX experimental disponiveis.\n" +
             "Stubs xboxkrnl/xam ainda nao sao servicos reais.", 16f, Color.LTGRAY)
         root.addView(result)
         scroll.addView(root)
@@ -185,6 +200,39 @@ class MainActivity : Activity() {
                 }
             } catch (_: Exception) { }
             show("ISO selecionada: $name\nTamanho: $size bytes\n\nToque em 2 para analisar XDVDFS.")
+        } else if (requestCode == PICK_KEY) {
+            if (busy || !XDVDFS_READY) return
+            busy(true)
+            show("Lendo chave externa de 16 bytes, sem salvar...")
+            worker.execute {
+                var buffer = ByteArray(17)
+                val message = try {
+                    val source = contentResolver.openInputStream(uri)
+                        ?: throw IllegalArgumentException("Nao foi possivel abrir keys.bin")
+                    val count = source.use { input ->
+                        var n = 0
+                        while (n < buffer.size) {
+                            val got = input.read(buffer, n, buffer.size - n)
+                            if (got < 0) break
+                            if (got == 0) continue
+                            n += got
+                        }
+                        n
+                    }
+                    if (count != 16) {
+                        "Chave rejeitada: o arquivo deve ter exatamente 16 bytes (binarios)."
+                    } else {
+                        val key = buffer.copyOfRange(0, 16)
+                        try { nativeSetXexKey(key) }
+                        finally { key.fill(0) }
+                    }
+                } catch (e: Throwable) {
+                    "Erro lendo chave externa: ${e.message}"
+                } finally {
+                    buffer.fill(0)
+                }
+                runOnUiThread { busy(false); show(message) }
+            }
         } else if (requestCode == SAVE_XEX) {
             val source = selectedIso ?: run { show("Selecione uma ISO"); return }
             if (!XDVDFS_READY || busy) return
@@ -203,6 +251,7 @@ class MainActivity : Activity() {
         }
     }
     override fun onDestroy() {
+        if (XDVDFS_READY) nativeClearXexKey()
         worker.shutdown()
         super.onDestroy()
     }

@@ -47,7 +47,22 @@ std::string describe(const Headers& info);
 // security block is not itself the unwrapped AES session key.
 std::vector<uint8_t> extract_pe(std::span<const uint8_t> xex,
                                 const Headers& headers,
-                                std::optional<std::array<uint8_t,16>> session_key = std::nullopt);
+                                std::optional<std::array<uint8_t,16>> master_key = std::nullopt);
+
+// The 16-byte key is supplied at runtime by the user. The encrypted image
+// key resides at security_offset+0x150; no console key is distributed.
+std::array<uint8_t,16> derive_session_key(std::span<const uint8_t> xex,
+                                           const Headers& headers,
+                                           const std::array<uint8_t,16>& master_key);
+
+// LZX Normal: verify the linked block chain (SHA-1), remove XEX chunk framing,
+// then decode the original CAB-style LZX Huffman/offset stream.
+std::array<uint8_t,20> sha1_lzx_block(std::span<const uint8_t> data);
+std::vector<uint8_t> unpack_xex_lzx_blocks(std::span<const uint8_t> input,
+    uint32_t first_block_size, std::array<uint8_t,20> first_block_hash);
+std::vector<uint8_t> decompress_xex_lzx(std::span<const uint8_t> data,
+    uint32_t first_block_size, std::array<uint8_t,20> first_block_hash,
+    uint32_t window_size,uint32_t image_size);
 
 // PE32 section loader (POWERPCBE machine). The guest RAM base may overlap the
 // raw XEX staging region; pass the extracted PE in a separate host vector.

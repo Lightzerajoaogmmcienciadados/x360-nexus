@@ -124,18 +124,45 @@ std::string describe(const Headers& h){
     for(const auto& lib:h.imports) s<<"\n  "<<lib.name<<" ("<<lib.record_count<<" registros; stub nao resolvido)";
     return s.str();
 }
+std::array<uint8_t,16> derive_session_key(Bytes xex, const Headers& h,
+                                           const std::array<uint8_t,16>& master_key) {
+    if(!h.security_offset)throw std::runtime_error("XEX2 sem Security Info para obter Session Key");
+    ensure(xex, uint64_t(h.security_offset)+0x150, 16,"Security Info: ImageKey truncada");
+    const auto sealed=xex.subspan(uint64_t(h.security_offset)+0x150,16);
+    // One AES-128 block with zero IV is AES-ECB decryption (no padding).
+    // Only the caller can provide the external master key; do not embed keys.
+    auto unwrapped=aes128_cbc_decrypt(sealed,master_key);
+    std::array<uint8_t,16> session{};
+    std::copy(unwrapped.begin(),unwrapped.end(),session.begin());
+    std::fill(unwrapped.begin(),unwrapped.end(),0);
+    return session;
+}
+
 std::vector<uint8_t> extract_pe(Bytes data, const Headers& h,
-                                std::optional<std::array<uint8_t,16>> key) {
+                                std::optional<std::array<uint8_t,16>> master_key) {
     if(h.pe_offset>=data.size())throw std::runtime_error("Payload XEX nao encontrado");
     Bytes payload=data.subspan(h.pe_offset);
     if(payload.size()>kMaxPeBytes)throw std::runtime_error("Payload maior que 128 MiB");
     std::vector<uint8_t> raw(payload.begin(),payload.end());
     if(h.encryption==1){
-        if(!key)throw std::runtime_error("Imagem XEX criptografada: requer chave de sessao valida do titular; nenhuma chave Retail esta incluida");
-        raw=aes128_cbc_decrypt(raw,*key);
+        if(!master_key)throw std::runtime_error("Imagem XEX criptografada: carregue um arquivo de chave externa de 16 bytes (nenhuma chave e incluida)");
+        auto session=derive_session_key(data,h,*master_key);
+        try { raw=aes128_cbc_decrypt(raw,session); }
+        catch (...) {std::fill(session.begin(),session.end(),0);throw;}
+        std::fill(session.begin(),session.end(),0);
     } else if(h.encryption!=0)throw std::runtime_error("Criptografia XEX nao suportada");
     if(h.compression==0)return raw;
-    if(h.compression==2)throw std::runtime_error("Compressao LZX identificada: descompressor XEX/LZX ainda nao integrado");
+    if(h.compression==2){
+        if(h.file_format_size<36)throw std::runtime_error("XEX2 Normal: File Format Info requer 36 bytes");
+        const size_t p=h.file_format_offset;
+        const auto window_size=be32(data,p+8);
+        const auto first_size=be32(data,p+12);
+        std::array<uint8_t,20> first_hash{};
+        ensure(data,p+16,20,"XEX2 Normal: SHA-1 inicial ausente");
+        std::copy_n(data.begin()+static_cast<std::ptrdiff_t>(p+16),20,first_hash.begin());
+        if(h.image_size==0)throw std::runtime_error("XEX2 Normal: Image Size ausente");
+        return decompress_xex_lzx(raw,first_size,first_hash,window_size,h.image_size);
+    }
     if(h.compression!=1)throw std::runtime_error("Compressao XEX desconhecida");
     if(h.file_format_size<16)throw std::runtime_error("File Format Info basic sem blocos");
     const size_t count=(h.file_format_size-8)/8;

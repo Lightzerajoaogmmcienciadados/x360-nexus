@@ -3,6 +3,8 @@
 #include <jni.h>
 
 #include <cstdio>
+#include <array>
+#include <algorithm>
 #include <vector>
 #include <optional>
 #include <exception>
@@ -24,6 +26,8 @@ uint32_t g_loaded_crc=0;
 std::string g_loaded_path;
 std::vector<uint8_t> g_raw_xex; // Original staged bytes, retained after PE mapping.
 std::optional<x360::xex::PreparedImage> g_prepared;
+// In-memory only. Never saved, logged or embedded in the distributed APK.
+std::optional<std::array<uint8_t,16>> g_external_master_key;
 
 jstring java_string(JNIEnv* env, const std::string& s) {
     // Paths are ASCII-sanitized by the XDVDFS reader; avoid embedded NUL.
@@ -40,6 +44,37 @@ const Entry& default_xex(const Image& image) {
     return *e;
 }
 } // namespace
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_x360nexus_MainActivity_nativeSetXexKey(JNIEnv* env, jobject, jbyteArray key_bytes) {
+    if(!key_bytes || env->GetArrayLength(key_bytes)!=16)
+        return java_string(env,"keys.bin deve conter exatamente 16 bytes binarios; nada foi alterado.");
+    std::array<uint8_t,16> new_key{};
+    env->GetByteArrayRegion(key_bytes,0,16,reinterpret_cast<jbyte*>(new_key.data()));
+    if(env->ExceptionCheck()){
+        std::fill(new_key.begin(),new_key.end(),0);
+        return nullptr;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_memory_mutex);
+        if(g_external_master_key)std::fill(g_external_master_key->begin(),g_external_master_key->end(),0);
+        g_external_master_key=new_key;
+        g_prepared.reset();
+    }
+    std::fill(new_key.begin(),new_key.end(),0);
+    return java_string(env,"Chave externa carregada em memoria (16 bytes). Valor nao exibido nem salvo.");
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_x360nexus_MainActivity_nativeClearXexKey(JNIEnv* env, jobject) {
+    std::lock_guard<std::mutex> lock(g_memory_mutex);
+    if(g_external_master_key){
+        std::fill(g_external_master_key->begin(),g_external_master_key->end(),0);
+        g_external_master_key.reset();
+    }
+    g_prepared.reset();
+    return java_string(env,"Chave removida da memoria do aplicativo.");
+}
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_x360nexus_MainActivity_nativeInspectXdvdfs(JNIEnv* env, jobject, jint fd) {
@@ -157,10 +192,13 @@ Java_com_x360nexus_MainActivity_nativePrepareStagedXex(JNIEnv* env, jobject) {
             g_ram->read(x360::xdvdfs::kGuestRamBase,g_raw_xex.data(),g_raw_xex.size());
         }
         const auto headers=x360::xex::parse_headers(g_raw_xex);
-        auto pe=x360::xex::extract_pe(g_raw_xex,headers);
+        auto pe=x360::xex::extract_pe(g_raw_xex,headers,g_external_master_key);
         if(pe.size()>x360::xex::kMaxPeBytes) throw std::runtime_error("PE fora do limite");
         auto next=std::make_unique<GuestRam>();
-        auto prepared=x360::xex::map_pe(pe,headers,*next);
+        x360::xex::PreparedImage prepared;
+        try {prepared=x360::xex::map_pe(pe,headers,*next);}
+        catch (...) {std::fill(pe.begin(),pe.end(),0);throw;}
+        std::fill(pe.begin(),pe.end(),0); // discard host-side extracted image after staging
         g_prepared=std::move(prepared);
         g_ram=std::move(next);
         return java_string(env,"PE32 POWERPCBE preparado na RAM!\nBase: "+format_hex(g_prepared->base)+

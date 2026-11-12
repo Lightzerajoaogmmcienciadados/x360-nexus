@@ -1,11 +1,15 @@
 #include "xex_loader.hpp"
 #include <array>
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <vector>
 #include <stdexcept>
+#include <algorithm>
 
 using namespace x360::xex;
 namespace {
@@ -40,7 +44,103 @@ std::vector<uint8_t> xex_sample(const std::vector<uint8_t>& pe,uint16_t comp=0,u
   std::copy(pe.begin(),pe.end(),x.begin()+0x300);
   return x;
 }
+struct LzxBitWriter {
+  std::vector<uint8_t> out;
+  uint16_t word=0;
+  unsigned used=0;
+  void put(uint32_t value,unsigned count) {
+    for(unsigned i=count;i>0;--i){
+      word=uint16_t((word<<1)|((value>>(i-1))&1));
+      if(++used==16){out.push_back(uint8_t(word));out.push_back(uint8_t(word>>8));used=0;word=0;}
+    }
+  }
+  void align(){if(used){word=uint16_t(word<<(16-used));out.push_back(uint8_t(word));out.push_back(uint8_t(word>>8));used=0;word=0;}}
+};
+std::vector<uint8_t> lzx_uncompressed(const std::vector<uint8_t>& plain) {
+  LzxBitWriter b;
+  b.put(0,1); // CAB LZX intel transform off
+  b.put(3,3); // uncompressed block
+  b.put(uint32_t(plain.size())>>8,16);
+  b.put(uint32_t(plain.size())&0xFF,8);
+  b.align();
+  // R0/R1/R2 = 1 (little endian uint32)
+  for(int n=0;n<3;++n){b.out.insert(b.out.end(),{1,0,0,0});}
+  b.out.insert(b.out.end(),plain.begin(),plain.end());
+  return b.out;
 }
+void lzx_pretree(LzxBitWriter& b) {
+  for(unsigned symbol=0;symbol<20;++symbol)
+    b.put(symbol==18?1u:(symbol==16||symbol==17?2u:0u),4);
+}
+void lzx_zeros(LzxBitWriter& b,unsigned count) {
+  while(count>=20){
+    unsigned take=std::min(count,51u);
+    b.put(0,1); // pretree 18, canonical code 0
+    b.put(take-20,5);
+    count-=take;
+  }
+  if(count){assert(count>=4 && count<=19);b.put(3,2);b.put(count-4,4);} // 17 -> 11
+}
+std::vector<uint8_t> lzx_literals_fixture(bool aligned) {
+  LzxBitWriter b;
+  b.put(0,1); // Intel E8 translation disabled
+  b.put(aligned?2:1,3);
+  b.put(0,16);b.put(4,8); // four literal output bytes
+  if(aligned){
+    for(unsigned i=0;i<8;++i)b.put((i<2)?1u:0u,3);
+  }
+  lzx_pretree(b);
+  lzx_zeros(b,77); // main tree codes for 'M' and 'Z'
+  b.put(2,2); // pretree 16 -> 10, delta 16: length 1
+  lzx_zeros(b,12);
+  b.put(2,2); // 'Z'
+  lzx_zeros(b,165);
+  lzx_pretree(b);
+  lzx_zeros(b,240); // remaining match symbols all zero
+  lzx_pretree(b);
+  lzx_zeros(b,249); // length tree all zero (all literals)
+  b.put(0,1);b.put(1,1);b.put(0,1);b.put(1,1); // M Z M Z
+  b.align();
+  return b.out;
+}
+std::vector<uint8_t> xex_normal_from_stream(const std::vector<uint8_t>& raw,
+                                             uint32_t output_size){
+  if(raw.size()>65535)throw std::runtime_error("test chunk too large");
+  std::vector<uint8_t> block(24,0);
+  block.push_back(uint8_t(raw.size()>>8));block.push_back(uint8_t(raw.size()));
+  block.insert(block.end(),raw.begin(),raw.end());
+  block.push_back(0);block.push_back(0);
+  auto x=xex_sample(std::vector<uint8_t>(output_size),2,0);
+  x.resize(0x300);
+  u32be(x,0x60,36);
+  u32be(x,0x68,0x8000);
+  u32be(x,0x6C,uint32_t(block.size()));
+  auto hash=sha1_lzx_block(block);
+  std::copy(hash.begin(),hash.end(),x.begin()+0x70);
+  u32be(x,0x104,output_size);
+  x.insert(x.end(),block.begin(),block.end());
+  return x;
+}
+std::vector<uint8_t> xex_normal_fixture(const std::vector<uint8_t>& plain);
+std::vector<uint8_t> xex_normal_fixture(const std::vector<uint8_t>& plain){
+  auto raw=lzx_uncompressed(plain);
+  if(raw.size()>65535)throw std::runtime_error("test chunk too large");
+  std::vector<uint8_t> block(24,0); // next block size = 0; hash of next block zeroed
+  block.push_back(uint8_t(raw.size()>>8));block.push_back(uint8_t(raw.size()));
+  block.insert(block.end(),raw.begin(),raw.end());
+  block.push_back(0);block.push_back(0); // zero chunk terminates this block
+  auto x=xex_sample(plain,2,0);
+  x.resize(0x300);
+  u32be(x,0x60,36);
+  u32be(x,0x68,0x8000); // LZX window 32 KiB
+  u32be(x,0x6C,uint32_t(block.size()));
+  auto hash=sha1_lzx_block(block);
+  std::copy(hash.begin(),hash.end(),x.begin()+0x70);
+  u32be(x,0x104,uint32_t(plain.size())); // decompressed file length
+  x.insert(x.end(),block.begin(),block.end());
+  return x;
+}
+ }
 int main(){
   const auto pe=pe_sample();
   auto xex=xex_sample(pe);
@@ -61,13 +161,21 @@ int main(){
 
   auto basic=xex_sample(pe,1,0);
   assert(extract_pe(basic,parse_headers(basic))==pe);
-  auto lzx=xex_sample(pe,2,0);
+  const auto lzx=xex_normal_fixture(pe);
+  assert(extract_pe(lzx,parse_headers(lzx))==pe);
+  for(const bool aligned : {false,true}) {
+    auto compressed=xex_normal_from_stream(lzx_literals_fixture(aligned),4);
+    const auto expanded=extract_pe(compressed,parse_headers(compressed));
+    assert(expanded==std::vector<uint8_t>({'M','Z','M','Z'}));
+  }
+  auto damaged=lzx;
+  damaged.back()^=0x80;
   bool blocked=false;
-  try {extract_pe(lzx,parse_headers(lzx));}catch(const std::runtime_error& e){blocked=std::string(e.what()).find("LZX")!=std::string::npos;}
+  try{(void)extract_pe(damaged,parse_headers(damaged));}catch(const std::runtime_error& e){blocked=std::string(e.what()).find("SHA-1")!=std::string::npos;}
   assert(blocked);
   auto encrypted=xex_sample(pe,0,1);
   blocked=false;
-  try {extract_pe(encrypted,parse_headers(encrypted));}catch(const std::runtime_error& e){blocked=std::string(e.what()).find("sessao")!=std::string::npos;}
+  try {extract_pe(encrypted,parse_headers(encrypted));}catch(const std::runtime_error& e){blocked=std::string(e.what()).find("chave externa")!=std::string::npos;}
   assert(blocked);
   std::vector<uint8_t> corrupt(24,0);blocked=false;
   try{parse_headers(corrupt);}catch(...){blocked=true;}assert(blocked);
@@ -76,5 +184,13 @@ int main(){
   const std::array<uint8_t,16> cipher{0x69,0xc4,0xe0,0xd8,0x6a,0x7b,4,0x30,0xd8,0xcd,0xb7,0x80,0x70,0xb4,0xc5,0x5a};
   auto plain=aes128_cbc_decrypt(cipher,k);
   for(int i=0;i<16;++i)assert(plain[i]==i*0x11);
-  std::cout<<"XEX header, PE mapping, basic compression, AES and guards: OK\n";
+  // Derive the session key using the *synthetic* AES-128 NIST vector.
+  auto synthetic_key_xex=xex_sample(pe,0,1);
+  std::copy(cipher.begin(),cipher.end(),synthetic_key_xex.begin()+0x100+0x150);
+  auto session=derive_session_key(synthetic_key_xex,parse_headers(synthetic_key_xex),k);
+  for(int i=0;i<16;++i)assert(session[i]==i*0x11);
+  const std::array<uint8_t,20> expected_sha1{0xa9,0x99,0x3e,0x36,0x47,0x06,0x81,0x6a,0xba,0x3e,
+         0x25,0x71,0x78,0x50,0xc2,0x6c,0x9c,0xd0,0xd8,0x9d};
+  assert(sha1_lzx_block(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>("abc"),3)) == expected_sha1);
+  std::cout<<"XEX/PE, LZX uncompressed frame, SHA-1 chain, AES key unwrap: OK\n";
 }

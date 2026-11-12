@@ -1,54 +1,49 @@
-# X360 Nexus v4.3 — XEX2 parser + PE32 loader + bounded CPU tracing
+# Project Xenon 4.4 — AES-128 with externally supplied key + CAB LZX
 
-Incremental educational update of the existing v4.2 Rust/C++ Android application.
+This incremental source update builds on v4.3 without replacing the XDVDFS
+ISO reader or the Rust PowerPC diagnostic tracer.
 
-## What is implemented
+## New C++ files / changes
+- `android/app/src/main/cpp/xex_lzx.cpp`: independently written CAB-LZX
+  decoder (uncompressed, Verbatim, Aligned blocks; Huffman lengths and LZ
+  back-references) and XEX Normal outer block/chunk framing with SHA-1 checks.
+- `xex_loader.hpp/.cpp`: XEX Security Info ImageKey extraction, AES key
+  unwrapping with a 16-byte *caller-supplied* external key, AES-CBC image
+  decryption, LZX Normal decompression, and existing PE32 section mapping.
+- `jni_bridge.cpp`: Android JNI methods to load/discard a key in process RAM;
+  the existing `nativePrepareStagedXex` uses it when encryption is present.
+- `MainActivity.kt`: new `CARREGAR CHAVE XEX (keys.bin)` and `DESCARTAR
+  CHAVE XEX` actions, and the existing bounded `5. EXECUTAR XEX NA CPU` action.
+- CMake, Gradle and GitHub Actions updated to compile the new C++ source.
 
-- Keeps XDVDFS ISO listing and `default.xex` raw staging from v4.2.
-- Parses XEX2 fixed and optional headers (big-endian), Security Info, File Format Info, Image Base, Entry Point, Title ID, and import-library descriptors (read-only diagnostics).
-- Extracts unencrypted, uncompressed XEX payloads and handles XEX Basic block plus zero-fill expansion (hard cap 128 MiB).
-- Implements a standalone portable AES-128-CBC primitive tested with standard AES vectors. An already unwrapped **session key** must be supplied by the legitimate test program developer; the Android UI never embeds a console retail key.
-- Maps a valid POWERPCBE PE32 basefile to sparse guest RAM according to the section table and checks executable entrypoint; replaces raw staging with mapped PE in shared C++ RAM.
-- Kotlin Android interface: **5. EXECUTAR XEX NA CPU (TRACE LIMITADO)**. This button attempts preparation and sends at most 256 bytes from a valid executable section via JNI to the Rust PPC interpreter.
-- Rust diagnostic trace: executes up to 32 recognized PPC instructions (`addi`, `addis`, `ori`, `oris`, `add`, `b/bl`), stops at unsupported opcodes/syscalls, and prints PC/LR/CTR and GPR0-GPR7.
-- Includes C++ XDVDFS + XEX unit tests and Rust CPU/trace tests. GitHub Actions builds ARM64 APK with Rust and C++ JNI.
+A key file must contain **exactly 16 raw bytes**. No console keys are included,
+stored on disk, shown in diagnostics, or fetched from third-party services.
+The app discards the key when the user presses the discard button or closes
+its Activity; native process memory may still contain copies unless securely
+cleared by the operating system.
 
-## What is NOT implemented
+## Limits and validation
+- The LZX decoder uses the classic CAB format, not LZX Delta. Unit tests
+  cover uncompressed blocks, Verbatim literals, Aligned literals, framing,
+  SHA-1 integrity, malformed data and an AES-128 test vector.
+- Intel E8-transformed LZX streams are explicitly rejected (PowerPC PE32
+  content should not use Intel x86 fixups). No known commercial game is used
+  in tests and real-world XEX compatibility is not guaranteed.
+- Memory limits: 128 MiB decompressed payload, 128 MiB XEX input, 512 MiB
+  sparse guest address space. Stream is decoded into host memory and mapped
+  into a new guest image, not executed in-place from raw staging.
+- Parsing and decryption do **not** imply that Xbox 360 games can run. Imports
+  `xboxkrnl` / `xam`, CPU ISA completeness, virtual memory, GPU and kernel
+  services remain missing. Rust trace still runs at most 32 supported PPC
+  instructions from an executable section and stops on unknown instructions.
 
-- No bundled retail console keys; no automatic session-key unwrap or commercial XEX decryption. Encrypted files show a diagnostic rather than pretending to execute.
-- XEX LZX (normal) is detected and **not decompressed**. Basic and uncompressed formats work under the stated constraints.
-- Real xboxkrnl.exe / xam.xex import ordinal resolution and kernel-service emulation are **not implemented**: library names and raw guest slots are enumerated as unresolved imports; no fake successful return codes.
-- The Rust CPU receives only a bounded code window copied from C++ guest memory. Branches outside the slice stop; this is not a full cross-language guest MMU bridge.
-- No complete Xbox 360 Xenon JIT, Xenos graphics, real firmware/kernel or commercial game execution.
+## Build / test C++
 
-## Main files (C++, Rust, Kotlin)
-
-- `android/app/src/main/cpp/xex_loader.hpp` & `xex_loader.cpp` — metadata, import inventory, PE32 mapping and Basic decompression.
-- `android/app/src/main/cpp/xex_crypto.cpp` — AES-128-CBC utility with caller-provided session key.
-- `android/app/src/main/cpp/jni_bridge.cpp` — existing ISO/staging functions plus XEX analysis, PE preparation and code-slice read.
-- `core/src/xex_trace.rs` & `cpu.rs` & `lib.rs` — bounded interpreter and JNI bridge to Kotlin.
-- `android/app/src/main/java/com/x360nexus/MainActivity.kt` — UI replacing the old Java class.
-- `tests/xex_loader_tests.cpp` — synthetic XEX + PE fixture, AES test vector and corruption guards.
-
-## Important build configuration
-
-The Android UI is now **Kotlin**, so `android/build.gradle` and `android/app/build.gradle` enable the Kotlin plugin (version 2.0.21), and the old `MainActivity.java` is removed to avoid duplicate Java classes. CMake includes `xex_loader.cpp` and `xex_crypto.cpp` in `libx360xdvdfs.so`; the existing Rust `libx360nexus.so` is retained. CI is `.github/workflows/build-x360-android-apk.yml`.
-
-## Test on PC (C++ only)
-
-```sh
-cmake -S . -B build
-cmake --build build
+```
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel 2
 ctest --test-dir build --output-on-failure
 ```
 
-## Use on Android
-
-1. Select a locally accessible ISO using SAF.
-2. Analyze ISO, then load raw `default.xex` into staging.
-3. Use **ANALISAR CABECALHOS XEX2** to inspect encryption/compression, base and entrypoint.
-4. Use **5. EXECUTAR XEX NA CPU (TRACE LIMITADO)**. If protected/LZX, the app explains the blocker. An unencrypted PE32/XEX homebrew fixture can be mapped and stepped up to 32 instructions.
-
-No official Xbox game is bundled; use only files you have permission to inspect.
-
-References: https://github.com/xenia-project/xenia/blob/master/src/xenia/cpu/xex_module.cc and https://github.com/xenia-project/xenia/blob/master/src/xenia/kernel/util/xex2_info.h
+Android APK build uses `.github/workflows/build-x360-android-apk.yml` with
+Rust ARM64, C++20 JNI and Kotlin. No proprietary XEX data is distributed.
