@@ -199,3 +199,30 @@ No game files, Xbox system keys or retail games are included.
 - Previous user-provided X360 Nexus library screenshot reused in native home screen as a miniature reference image: android/app/src/main/assets/images/x360-nexus-anterior.jpg.
 - Android All Files Access permission remains user controlled.
 - No complete Xenos GPU hardware/PM4/EDRAM engine or universal commercial Xbox 360 compatibility in Nexus Core.
+
+
+## 10.5 — Nexus Blocks original para celular: Rust, Java, Kotlin e C++
+
+**Sem direitos e código-fonte de Minecraft: Xbox 360 Edition, não é possível
+portar o jogo original. Este projeto NÃO inclui o jogo, sua lógica, mundo,
+sons, texturas, marcas, saves ou código de terceiros.**
+
+- **Rust:** mundo de blocos original 24×12×24, terreno procedural
+  determinístico, movimentação/câmera, adicionar/remover blocos,
+  serialização e testes unitários.
+- **C++17 / Android NDK:** raycaster 3D por DDA, sombreamento de faces,
+  névoa de distância e ponto de mira; renderização por CPU
+  independente do Xenia. Compila para libnexusvoxel.so ARM64.
+- **Java:** interface Android nativa com controles por toque e gamepad,
+  gerenciamento de renderização em thread única e seleção de material.
+- **Kotlin:** salvamento local privado do mundo e ajustes
+  Econômico 160px/20 FPS, Equilibrado 240px/30 FPS,
+  Qualidade 320px/60 FPS. São limites desejados, não medidos.
+- O sandbox é acessível nas páginas Início, Biblioteca e Núcleo.
+- **Xenia/XenDroid Mali permanece integralmente integrado**, incluindo
+  libe.so, biblioteca de ISOs e perfil de jogador Xbox 360.
+- Minecraft: Xbox 360 Edition só pode ser executado por emulação
+  com uma cópia do jogo que o usuário tenha direito de usar, não
+  como port nativo do jogo proprietário.
+- Sem garantia de desempenho ou compatibilidade no Galaxy A17;
+  testes Rust e compilação Android não equivalem a teste físico.

@@ -1,4 +1,4 @@
-plugins { id 'com.android.application' }
+plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android' }
 android {
     namespace 'com.x360nexus'
     compileSdk 35
@@ -6,12 +6,19 @@ android {
         applicationId 'com.x360nexus'
         minSdk 26
         targetSdk 35
-        versionCode 1004
-        versionName '10.4-nexus-core-xenia-mali'
+        versionCode 1005
+        versionName '10.5-nexus-blocks-original-xenia'
         ndk { abiFilters 'arm64-v8a' }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '3.22.1'
+        }
     }
 }

@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(nexusvoxel LANGUAGES CXX)
+add_library(nexusvoxel SHARED voxel_renderer.cpp)
+target_compile_features(nexusvoxel PRIVATE cxx_std_17)
+target_compile_options(nexusvoxel PRIVATE -O3 -ffast-math -fvisibility=hidden)

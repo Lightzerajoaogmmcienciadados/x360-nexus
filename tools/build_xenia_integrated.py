@@ -45,6 +45,7 @@ def integrate(upstream, nexus, decoded, license_file):
     ])
     nexus_names = check_native(nexus, [
         "lib/arm64-v8a/libx360nexus.so",
+        "lib/arm64-v8a/libnexusvoxel.so",
         "classes.dex",
     ])
     if not (decoded / "AndroidManifest.xml").is_file():
@@ -69,10 +70,14 @@ def integrate(upstream, nexus, decoded, license_file):
             with z.open(name) as data, target.open("wb") as output:
                 shutil.copyfileobj(data, output)
 
-        target_lib = decoded / "lib" / "arm64-v8a" / "libx360nexus.so"
-        target_lib.parent.mkdir(parents=True, exist_ok=True)
-        with z.open("lib/arm64-v8a/libx360nexus.so") as data, target_lib.open("wb") as output:
-            shutil.copyfileobj(data, output)
+        # The Nexus app contains both Rust (gameplay) and C++ (raycasting)
+        # native libraries. Preserve them both in the single Xenia-integrated APK.
+        for native_name in ("libx360nexus.so", "libnexusvoxel.so"):
+            path = "lib/arm64-v8a/" + native_name
+            target_lib = decoded / path
+            target_lib.parent.mkdir(parents=True, exist_ok=True)
+            with z.open(path) as data, target_lib.open("wb") as output:
+                shutil.copyfileobj(data, output)
 
         # Preserve a scaled version of the user-supplied previous X360 Nexus
         # screenshot in the combined APK, without changing its layout.
@@ -116,9 +121,9 @@ def integrate(upstream, nexus, decoded, license_file):
            for x in application.findall("activity")):
         raise ValueError("Nexus launcher already exists")
 
-    root.set(A + "versionCode", "1004")
-    root.set(A + "versionName", "10.4-xenia-mali-dual-core")
-    application.set(A + "label", "X360 Nexus 10.4 • Xenia Mali")
+    root.set(A + "versionCode", "1005")
+    root.set(A + "versionName", "10.5-nexus-blocks-xenia-mali")
+    application.set(A + "label", "X360 Nexus 10.5 • Nexus Blocks")
     nexus_activity = ET.SubElement(application, "activity")
     nexus_activity.set(A + "name", "com.x360nexus.MainActivity")
     nexus_activity.set(A + "exported", "true")
@@ -164,7 +169,7 @@ def integrate(upstream, nexus, decoded, license_file):
     print(f"Original XenDroid dex: {len(upstream_dex)}")
     print(f"X360 Nexus dex appended: {len(nexus_dex)}")
     print(f"Xenia libe.so preserved: YES")
-    print(f"X360 Nexus libx360nexus.so added: YES")
+    print(f"X360 Nexus Rust and voxel C++ native libraries added: YES")
     print("Main launcher changed to com.x360nexus.MainActivity")
     print("Original XenDroid emulation host preserved")
 

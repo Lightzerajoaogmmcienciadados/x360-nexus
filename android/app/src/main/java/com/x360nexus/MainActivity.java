@@ -10,6 +10,9 @@ import android.graphics.Color;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.view.Choreographer;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import android.widget.ImageView;
 import android.widget.Toast;
 import android.widget.Switch;
@@ -87,6 +90,15 @@ public final class MainActivity extends Activity {
     private native String nativeInspectIso(int fileDescriptor);
     private native String nativeInspectXex(byte[] bytes);
     private native String nativeExecuteRawPpc(byte[] bytes);
+    private native void nativeVoxelReset(int seed);
+    private native void nativeVoxelTick(int buttons,int millis);
+    private native boolean nativeVoxelAction(int mode);
+    private native boolean nativeVoxelSelect(int block);
+    private native byte[] nativeVoxelSnapshot();
+    private native float[] nativeVoxelCamera();
+    private native byte[] nativeVoxelSave();
+    private native boolean nativeVoxelLoad(byte[] save);
+    private native String nativeVoxelInfo();
     private native void nativeArcadeReset();
     private native int[] nativeArcadeFrame(int buttons,int deltaMs);
     private native String nativeArcadeStatus();
@@ -113,6 +125,16 @@ public final class MainActivity extends Activity {
     private ImageView arcadeImage;
     private TextView arcadeOutput;
     private Choreographer.FrameCallback arcadeCallback;
+    private boolean voxelActive=false;
+    private volatile int voxelButtons=0;
+    private long voxelLastNanos=0,voxelNextNanos=0;
+    private int voxelFrames=0;
+    private final AtomicBoolean voxelBusy=new AtomicBoolean(false);
+    private ExecutorService voxelExecutor;
+    private Choreographer.FrameCallback voxelCallback;
+    private ImageView voxelImage;
+    private Bitmap voxelBitmap;
+    private TextView voxelStatus;
 
     private void vibrate(int durationMs) {
         Haptics.pulse(this,shell,durationMs,false);
@@ -208,6 +230,7 @@ public final class MainActivity extends Activity {
         showTab(0);
     }
     private void showTab(int index) {
+        stopVoxel();
         stopArcade();
         if(surface!=null){surface.onPause();surface=null;}
         tabIndex=index;content.removeAllViews();tabs.removeAllViews();
@@ -252,6 +275,12 @@ public final class MainActivity extends Activity {
         Button arcade=button("▶ Jogar Nexus Paddle (Rust independente)");
         add(independent,arcade,12);
         arcade.setOnClickListener(v->showNativeArcade());
+        LinearLayout blocks=panel("NEXUS BLOCKS — MUNDO 3D ORIGINAL",
+            "Demonstração independente em Rust + C++ + Java + Kotlin. Terreno gerado, construção de blocos, câmera livre e salvamento no celular.");
+        add(content,blocks,12);
+        Button playBlocks=button("▶ Jogar Nexus Blocks (3D sem Xenia)");
+        add(blocks,playBlocks,10);
+        playBlocks.setOnClickListener(v->showVoxelBlocks());
         LinearLayout banner=panel("MOTOR NATIVO  •  ARM64",
             RUST_AVAILABLE?"Biblioteca Rust carregada":"Biblioteca Rust indisponível");
         add(content,banner,18);
@@ -288,6 +317,12 @@ public final class MainActivity extends Activity {
     }
     private void core() {
         heading("Núcleo Rust / Xenon","Ferramentas executadas localmente no aparelho.");
+        LinearLayout voxelPanel=panel("MUNDO DE BLOCOS ORIGINAL — PORT ANDROID",
+            "Simulação de blocos em Rust, raycaster C++ ARM64, controles Java e salvamentos Kotlin. Não é um port do Minecraft Xbox 360 original.");
+        add(content,voxelPanel,11);
+        Button voxelBtn=button("Abrir Nexus Blocks — 3D jogável");
+        add(voxelPanel,voxelBtn,10);
+        voxelBtn.setOnClickListener(v->showVoxelBlocks());
         LinearLayout homebrew=panel("EXECUÇÃO DIRETA — NÚCLEO RUST PRÓPRIO",
             "Motor independente do Xenia: demonstração jogável Nexus Paddle e interpretador PowerPC limitado para programas próprios .ppcbin. Não inicia Minecraft/Forza ISO.");
         add(content,homebrew,11);
@@ -431,6 +466,9 @@ public final class MainActivity extends Activity {
         Button direct=button("▶ Iniciar jogo nativo sem Xenia");
         add(independent,direct,10);
         direct.setOnClickListener(v->showNativeArcade());
+        Button blocks=outlined("▶ Mundo de blocos 3D original (Rust + C++)");
+        add(independent,blocks,10);
+        blocks.setOnClickListener(v->showVoxelBlocks());
         Button profiles=outlined("Gerenciar perfis Xbox 360 locais");
         add(independent,profiles,9);
         profiles.setOnClickListener(v->showXboxProfiles());
@@ -1016,6 +1054,28 @@ public final class MainActivity extends Activity {
         nativeSetButton(mask,pressed);refreshPad();
     }
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        if(voxelActive){
+            int flag=0;
+            switch(event.getKeyCode()){
+                case KeyEvent.KEYCODE_DPAD_UP:flag=1;break;
+                case KeyEvent.KEYCODE_DPAD_DOWN:flag=2;break;
+                case KeyEvent.KEYCODE_DPAD_LEFT:flag=16;break;
+                case KeyEvent.KEYCODE_DPAD_RIGHT:flag=32;break;
+                case KeyEvent.KEYCODE_BUTTON_A:
+                    if(event.getAction()==KeyEvent.ACTION_DOWN && event.getRepeatCount()==0)
+                        nativeVoxelAction(0);
+                    return true;
+                case KeyEvent.KEYCODE_BUTTON_B:
+                    if(event.getAction()==KeyEvent.ACTION_DOWN && event.getRepeatCount()==0)
+                        nativeVoxelAction(1);
+                    return true;
+            }
+            if(flag!=0){
+                if(event.getAction()==KeyEvent.ACTION_DOWN)voxelButtons|=flag;
+                else if(event.getAction()==KeyEvent.ACTION_UP)voxelButtons&=~flag;
+                return true;
+            }
+        }
         if(arcadeActive){
             int key=event.getKeyCode();
             if(key==KeyEvent.KEYCODE_DPAD_UP||key==KeyEvent.KEYCODE_W){
@@ -1053,6 +1113,19 @@ public final class MainActivity extends Activity {
         if(RUST_AVAILABLE && (event.getSource()&InputDevice.SOURCE_JOYSTICK)==InputDevice.SOURCE_JOYSTICK
             && event.getAction()==MotionEvent.ACTION_MOVE){
             if(arcadeActive){arcadeAxis=event.getAxisValue(MotionEvent.AXIS_Y);}
+            if(voxelActive){
+                final float x=event.getAxisValue(MotionEvent.AXIS_X);
+                final float y=event.getAxisValue(MotionEvent.AXIS_Y);
+                final float rx=event.getAxisValue(MotionEvent.AXIS_Z);
+                voxelButtons &= ~(1|2|4|8|16|32);
+                if(y < -0.26f)voxelButtons|=1;
+                if(y > 0.26f)voxelButtons|=2;
+                if(x < -0.26f)voxelButtons|=4;
+                if(x > 0.26f)voxelButtons|=8;
+                if(rx < -0.26f)voxelButtons|=16;
+                if(rx > 0.26f)voxelButtons|=32;
+                return true;
+            }
             nativeSetAxis(0,(int)(event.getAxisValue(MotionEvent.AXIS_X)*32767));
             nativeSetAxis(1,(int)(event.getAxisValue(MotionEvent.AXIS_Y)*32767));
             nativeSetAxis(2,(int)(event.getAxisValue(MotionEvent.AXIS_Z)*32767));
@@ -1283,13 +1356,233 @@ public final class MainActivity extends Activity {
         },"xenia-player-list").start();
     }
 
+
+    /**
+     * Original voxel sandbox. This is independent of Xenia; no official
+     * Minecraft assets, executable code or saves are used here.
+     */
+    private void showVoxelBlocks(){
+        if(!RUST_AVAILABLE||!VoxelRenderer.available()){
+            new android.app.AlertDialog.Builder(this)
+                .setTitle("Motor de blocos indisponível")
+                .setMessage("O jogo original precisa das bibliotecas Rust e C++ ARM64.")
+                .setPositiveButton("OK",null).show();
+            return;
+        }
+        stopVoxel();
+        stopArcade();
+        if(surface!=null){surface.onPause();surface=null;}
+        content.removeAllViews();
+        heading("NEXUS BLOCKS — MUNDO ORIGINAL",
+            "Terreno procedural 3D, blocos de construção e modo livre. Não é Minecraft: Xbox 360 Edition.");
+        final int width=VoxelSaves.renderWidth(this);
+        final int height=width*9/16;
+        voxelImage=new ImageView(this);
+        voxelImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        voxelImage.setBackgroundColor(BG);
+        voxelBitmap=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);
+        LinearLayout.LayoutParams imageParams=new LinearLayout.LayoutParams(-1,dp(245));
+        imageParams.topMargin=dp(12);
+        content.addView(voxelImage,imageParams);
+        voxelStatus=text("Iniciando mundo original...",12,LIGHT,false);
+        add(content,voxelStatus,12);
+
+        LinearLayout direction=panel("MOVIMENTAÇÃO",
+            "Segure os botões ou use o controle Android (analógico/D-pad). Câmera livre.");
+        add(content,direction,12);
+        LinearLayout first=linear(true);
+        voxelTouchButton(first,"↑ Frente",1);
+        voxelTouchButton(first,"↓ Trás",2);
+        add(direction,first,10);
+        LinearLayout second=linear(true);
+        voxelTouchButton(second,"← Lado",4);
+        voxelTouchButton(second,"→ Lado",8);
+        add(direction,second,8);
+        LinearLayout turn=linear(true);
+        voxelTouchButton(turn,"↺ Girar",16);
+        voxelTouchButton(turn,"Girar ↻",32);
+        add(direction,turn,8);
+        LinearLayout look=linear(true);
+        voxelTouchButton(look,"Olhar ↑",64);
+        voxelTouchButton(look,"Olhar ↓",128);
+        add(direction,look,8);
+        LinearLayout fly=linear(true);
+        voxelTouchButton(fly,"Voar ↑",256);
+        voxelTouchButton(fly,"Voar ↓",512);
+        add(direction,fly,8);
+
+        LinearLayout construction=panel("CONSTRUÇÃO ORIGINAL",
+            "Aponte a mira branca para um bloco. Remova ou coloque blocos.");
+        add(content,construction,12);
+        LinearLayout edit=linear(true);
+        Button mine=button("Remover");
+        Button place=button("Colocar");
+        LinearLayout.LayoutParams a=new LinearLayout.LayoutParams(0,dp(57),1f);
+        a.setMargins(dp(3),0,dp(3),0);
+        edit.addView(mine,a);
+        LinearLayout.LayoutParams b=new LinearLayout.LayoutParams(0,dp(57),1f);
+        b.setMargins(dp(3),0,dp(3),0);
+        edit.addView(place,b);
+        add(construction,edit,10);
+        mine.setOnClickListener(v->{
+            nativeVoxelAction(0);
+            Haptics.pulse(this,mine,35,false);
+        });
+        place.setOnClickListener(v->{
+            nativeVoxelAction(1);
+            Haptics.pulse(this,place,35,false);
+        });
+        Button material=outlined("Selecionar material (grama, terra, pedra, madeira...)");
+        add(construction,material,9);
+        material.setOnClickListener(v->{
+            String[] choices={"Grama","Terra","Pedra","Madeira","Folhas","Areia"};
+            new android.app.AlertDialog.Builder(this)
+                .setTitle("Selecionar bloco original")
+                .setItems(choices,(dialog,selected)->nativeVoxelSelect(selected+1))
+                .setNegativeButton("Cancelar",null).show();
+        });
+
+        LinearLayout settings=panel("DESEMPENHO DO GALAXY A17",
+            "160px: leve • 240px: recomendado • 320px: mais detalhado. "
+            +"O limite de FPS também é configurável.");
+        add(content,settings,12);
+        Button preset=outlined("Renderização: "+width+" px • "+VoxelSaves.frameLimit(this)+" FPS");
+        add(settings,preset,10);
+        preset.setOnClickListener(v->{
+            new android.app.AlertDialog.Builder(this)
+                .setTitle("Perfil gráfico do Nexus Blocks")
+                .setItems(new String[]{"Econômico: 160px / 20 FPS",
+                    "Equilibrado: 240px / 30 FPS",
+                    "Qualidade: 320px / 60 FPS"},
+                    (dialog,index)->{
+                        int[] dimensions={160,240,320};
+                        int[] fps={20,30,60};
+                        VoxelSaves.setRenderWidth(this,dimensions[index]);
+                        VoxelSaves.setFrameLimit(this,fps[index]);
+                        stopVoxel();
+                        showVoxelBlocks();
+                    }).setNegativeButton("Cancelar",null).show();
+        });
+        Button reset=outlined("Criar novo mundo (substitui o mundo salvo)");
+        add(settings,reset,9);
+        reset.setOnClickListener(v->new android.app.AlertDialog.Builder(this)
+            .setTitle("Substituir mundo?")
+            .setMessage("Seu mundo atual será substituído por um novo terreno original. "
+                +"Esta ação não afeta jogos nem saves do Xenia.")
+            .setNegativeButton("Cancelar",null)
+            .setPositiveButton("Criar novo mundo",(dialog,which)->{
+                int seed=(int)(System.nanoTime()&0x7fff_ffffL);
+                nativeVoxelReset(seed);
+                VoxelSaves.save(this,nativeVoxelSave());
+                voxelStatus.setText("Mundo novo criado! Seed: "+seed);
+            }).show());
+        Button back=outlined("Salvar mundo e voltar à Biblioteca");
+        add(content,back,13);
+        back.setOnClickListener(v->showTab(1));
+
+        byte[] saved=VoxelSaves.load(this);
+        if(saved==null||!nativeVoxelLoad(saved))nativeVoxelReset(2026);
+        voxelActive=true;
+        voxelButtons=0;
+        voxelLastNanos=0;voxelNextNanos=0;voxelFrames=0;
+        voxelExecutor=Executors.newSingleThreadExecutor();
+        voxelBusy.set(false);
+        voxelCallback=new Choreographer.FrameCallback(){
+            @Override public void doFrame(long timestamp){
+                if(!voxelActive)return;
+                if(timestamp>=voxelNextNanos
+                    &&voxelBusy.compareAndSet(false,true)){
+                    voxelNextNanos=timestamp+1000000000L/VoxelSaves.frameLimit(MainActivity.this);
+                    long delta=voxelLastNanos==0?33:
+                        Math.max(0,Math.min(50,(timestamp-voxelLastNanos)/1000000L));
+                    voxelLastNanos=timestamp;
+                    final int movement=voxelButtons;
+                    final int frameCount=++voxelFrames;
+                    final ExecutorService executor=voxelExecutor;
+                    if(executor!=null&&!executor.isShutdown()){
+                        try{
+                            executor.execute(()->{
+                                int[] image=null;
+                                String report=null;
+                                try{
+                                    nativeVoxelTick(movement,(int)delta);
+                                    image=VoxelRenderer.render(nativeVoxelSnapshot(),
+                                        nativeVoxelCamera(),width,height);
+                                    if(frameCount%30==0)report=nativeVoxelInfo();
+                                }catch(Throwable err){report="Erro voxel: "+err.getMessage();}
+                                final int[] next=image;
+                                final String current=report;
+                                runOnUiThread(()->{
+                                    try{
+                                        if(voxelActive&&voxelBitmap!=null&&voxelImage!=null
+                                            &&next!=null&&next.length==width*height){
+                                            voxelBitmap.setPixels(next,0,width,0,0,width,height);
+                                            voxelImage.setImageBitmap(voxelBitmap);
+                                        }
+                                        if(voxelActive&&voxelStatus!=null&&current!=null){
+                                            voxelStatus.setText(current);
+                                        }
+                                    }finally{voxelBusy.set(false);}
+                                });
+                            });
+                        }catch(java.util.concurrent.RejectedExecutionException err){
+                            voxelBusy.set(false);
+                        }
+                    }else{voxelBusy.set(false);}
+                }
+                Choreographer.getInstance().postFrameCallback(this);
+            }
+        };
+        Choreographer.getInstance().postFrameCallback(voxelCallback);
+    }
+    private void voxelTouchButton(LinearLayout parent,String label,int flag){
+        Button button=outlined(label);
+        button.setTextSize(12);
+        LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(0,dp(57),1f);
+        params.setMargins(dp(3),0,dp(3),0);
+        parent.addView(button,params);
+        button.setOnTouchListener((view,event)->{
+            switch(event.getActionMasked()){
+                case MotionEvent.ACTION_DOWN:
+                    voxelButtons|=flag;
+                    Haptics.pulse(this,view,30,false);
+                    return true;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    voxelButtons&=~flag;
+                    return true;
+                default:return true;
+            }
+        });
+    }
+    private void stopVoxel(){
+        if(!voxelActive)return;
+        voxelActive=false;
+        voxelButtons=0;
+        if(voxelCallback!=null){
+            Choreographer.getInstance().removeFrameCallback(voxelCallback);
+            voxelCallback=null;
+        }
+        try{
+            if(RUST_AVAILABLE)VoxelSaves.save(this,nativeVoxelSave());
+        }catch(Throwable ignored){}
+        if(voxelExecutor!=null){
+            voxelExecutor.shutdownNow();
+            voxelExecutor=null;
+        }
+        voxelImage=null;
+        voxelBitmap=null;
+        voxelStatus=null;
+    }
+
     private void about() {
-        heading("Sobre o X360 Nexus","Build Android 10.4 • Nexus Core + Xenia integrado");
+        heading("Sobre o X360 Nexus","Build Android 10.5 • Nexus Blocks original e Xenia preservado");
         status("ARQUITETURA","Android SDK + OpenGL ES 2.0 + AudioTrack + Rust JNI aarch64.");
         status("SUPORTE ATUAL","Dois modos: Nexus Core Rust com jogo original e PowerPC experimental, e Xenia/XenDroid ARM64 integrado para jogos Xbox 360; perfis locais e gráficos, modos de tela 60/90/120Hz e otimizações Mali.");
         status("MOTOR XENIA MALI",ExternalXboxBackend.isIntegrated(this)
             ?"Nucleo Xenia ARM64 integrado ao APK. Execucao de jogos ocorre em processo de emulacao proprio (XenDroid), com Vulkan."
             :"Apenas integracao com motor externo. Instale o emulador XenDroid separadamente.");
+        status("NEXUS BLOCKS","Jogo de mundo de blocos ORIGINAL para Android: Rust (mundo e interações), C++ (raycasting 3D), Java (interface e controles) e Kotlin (perfil e salvamentos). Não reutiliza código ou conteúdo de Minecraft Xbox 360 Edition.");
         status("LIMITAÇÕES IMPORTANTES",
             "Nexus Core sem Xenia não executa ISOs/XEX comerciais: somente jogo original Rust e programas PowerPC experimentais. Xenia integrado permanece disponível para os jogos suportados. 90/120Hz são pedidos à tela do Nexus, não garantia de FPS no Xenia.");
         status("PRIVACIDADE","Arquivos escolhidos permanecem no aparelho. A biblioteca guarda URIs locais, nomes, tamanhos e resultados de inspeção.");
@@ -1435,6 +1728,7 @@ public final class MainActivity extends Activity {
     }
     private void stopSound(){audioPlaying=false;}
     @Override protected void onPause(){
+        stopVoxel();
         stopArcade();
         super.onPause();stopSound();if(surface!=null)surface.onPause();
     }
@@ -1447,6 +1741,7 @@ public final class MainActivity extends Activity {
         }
     }
     @Override protected void onDestroy(){
+        stopVoxel();
         stopSound();super.onDestroy();
     }
 }

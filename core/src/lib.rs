@@ -12,6 +12,7 @@ pub mod loader;
 pub mod memory;
 pub mod galaxy;
 pub mod arcade;
+pub mod voxel_world;
 mod galaxy_jni;
 mod native_jni;
 mod compat_lab;
