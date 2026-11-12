@@ -1,10 +1,10 @@
 //! Educational Xenon/PPC64 interpreter. This is NOT a complete Xbox 360 CPU.
 use crate::memory::Memory;
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct Cpu {
     pub gpr:[u64;32], pub pc:usize, pub lr:u64, pub ctr:u64, pub cr:u32,
-    pub xer:u32, pub halted:bool,
+    pub xer:u32, pub halted:bool, pub fpr:[f64;32],
 }
 fn mask32(mb:u32,me:u32)->u32{
     let mut mask=0;
@@ -12,7 +12,7 @@ fn mask32(mb:u32,me:u32)->u32{
     mask
 }
 impl Cpu {
-    pub fn new()->Self {Self{gpr:[0;32],pc:0,lr:0,ctr:0,cr:0,xer:0,halted:false}}
+    pub fn new()->Self {Self{gpr:[0;32],pc:0,lr:0,ctr:0,cr:0,xer:0,halted:false,fpr:[0.0;32]}}
     fn cr_field(&mut self, field:u32, bits:u32){let shift=28-4*field;self.cr=(self.cr&!(15u32<<shift))|((bits&15)<<shift);}
     fn cr0(&mut self, val:u64) {let s=val as i64;self.cr_field(0,if s<0 {8} else if s>0 {4} else {2});}
     fn cmp(&mut self,instr:u32,unsigned:bool){
@@ -48,7 +48,7 @@ impl Cpu {
     pub fn step_mut(&mut self,mem:&mut Memory)->Result<(),String>{
         if self.halted{return Err("CPU halted".into());}
         if self.pc%4!=0{return Err(format!("misaligned PC 0x{:X}",self.pc));}
-        let ins=mem.read_u32_be(self.pc).map_err(|e|format!("fetch @0x{:08X}: {e}",self.pc))?;
+        let ins=mem.fetch_u32_be(self.pc).map_err(|e|format!("fetch @0x{:08X}: {e}",self.pc))?;
         let op=ins>>26;
         let rt=((ins>>21)&31) as usize;let ra=((ins>>16)&31) as usize;let rb=((ins>>11)&31) as usize;
         let imm=ins as u16 as i16;
@@ -62,6 +62,15 @@ impl Cpu {
                 let v=(self.gpr[rt] as u32).rotate_left(sh)&mask32(mb,me);
                 self.gpr[ra]=v as u64;if ins&1!=0{self.cr0(self.gpr[ra]);}},
             10|11=>self.cmp(ins,op==10),
+            8=>{ // subfic RT,RA,SIMM
+                self.gpr[rt]=(imm as i64 as u64).wrapping_sub(self.gpr[ra]);
+            },
+            12|13=>{ // addic / addic.
+                let a=self.gpr[ra];
+                let b=imm as i64 as u64;
+                self.gpr[rt]=a.wrapping_add(b);
+                if op==13{self.cr0(self.gpr[rt]);}
+            },
             32|33|34|36|37|38|40|44=>{
                 let addr=self.ea(ra,imm)?;
                 let update=op==33 || op==37;
@@ -77,6 +86,20 @@ impl Cpu {
                     _=>unreachable!(),
                 }
                 if update{self.gpr[ra]=addr as u64;}
+            },
+            48|50|52|54=>{ // lfs, lfd, stfs, stfd
+                let addr=self.ea(ra,imm)?;
+                match op {
+                    48=>{if addr%4!=0{return Err("unaligned lfs".into())};
+                        self.fpr[rt]=f32::from_bits(mem.read_u32_be(addr).map_err(str::to_string)?) as f64;},
+                    50=>{if addr%8!=0{return Err("unaligned lfd".into())};
+                        self.fpr[rt]=f64::from_bits(mem.read_u64_be(addr).map_err(str::to_string)?);},
+                    52=>{if addr%4!=0{return Err("unaligned stfs".into())};
+                        mem.write_u32_be(addr,(self.fpr[rt] as f32).to_bits()).map_err(str::to_string)?;},
+                    54=>{if addr%8!=0{return Err("unaligned stfd".into())};
+                        mem.write_u64_be(addr,self.fpr[rt].to_bits()).map_err(str::to_string)?;},
+                    _=>unreachable!(),
+                }
             },
             18=>{
                 let displacement=(((ins&0x03ff_fffc) as i32)<<6)>>6;
@@ -105,6 +128,23 @@ impl Cpu {
                 let xo=(ins>>1)&1023;
                 match xo {
                     266=>{self.gpr[rt]=self.gpr[ra].wrapping_add(self.gpr[rb]);if ins&1!=0{self.cr0(self.gpr[rt]);}},
+                    40=>{self.gpr[rt]=self.gpr[rb].wrapping_sub(self.gpr[ra]);if ins&1!=0{self.cr0(self.gpr[rt]);}}, // subf
+                    316=>{self.gpr[ra]=self.gpr[rt]^self.gpr[rb];if ins&1!=0{self.cr0(self.gpr[ra]);}},
+                    28=>{self.gpr[ra]=self.gpr[rt]&self.gpr[rb];if ins&1!=0{self.cr0(self.gpr[ra]);}},
+                    24=>{self.gpr[ra]=(self.gpr[rt] as u32).wrapping_shl(self.gpr[rb] as u32&31) as u64;},
+                    23|151|87|215|279|407=>{
+                        let addr=self.gpr[ra].wrapping_add(self.gpr[rb]);
+                        let address=usize::try_from(addr).map_err(|_|"indexed address overflow")?;
+                        match xo {
+                            23=>{if addr%4!=0{return Err("unaligned lwzx".into())};self.gpr[rt]=mem.read_u32_be(address).map_err(str::to_string)? as u64},
+                            151=>{if addr%4!=0{return Err("unaligned stwx".into())};mem.write_u32_be(address,self.gpr[rt] as u32).map_err(str::to_string)?},
+                            87=>self.gpr[rt]=mem.read_u8(address).map_err(str::to_string)? as u64,
+                            215=>mem.write_u8(address,self.gpr[rt] as u8).map_err(str::to_string)?,
+                            279=>{if addr%2!=0{return Err("unaligned lhzx".into())};self.gpr[rt]=mem.read_u16_be(address).map_err(str::to_string)? as u64},
+                            407=>{if addr%2!=0{return Err("unaligned sthx".into())};mem.write_u16_be(address,self.gpr[rt] as u16).map_err(str::to_string)?},
+                            _=>unreachable!(),
+                        }
+                    },
                     444=>{self.gpr[ra]=self.gpr[rt] | self.gpr[rb];if ins&1!=0{self.cr0(self.gpr[ra]);}},
                     339|467=>{
                         let spr=((ins>>16)&31)|(((ins>>11)&31)<<5);
@@ -113,6 +153,20 @@ impl Cpu {
                     },
                     _=>return Err(format!("opcode31 XO={xo} unsupported")),
                 }
+            },
+            63=>{ // Basic scalar floating point operations. No FPSCR exception model yet.
+                let xo=(ins>>1)&1023;
+                let form=xo&31;
+                let fc=((ins>>6)&31) as usize;
+                let a=self.fpr[ra];let b=self.fpr[rb];
+                self.fpr[rt]=match (form,xo) {
+                    (21,_)=>a+b, // fadd
+                    (20,_)=>a-b, // fsub
+                    (18,_)=>a/b, // fdiv
+                    (25,_)=>a*self.fpr[fc], // fmul: FRC operand
+                    (_,72)=>b, // fmr
+                    _=>return Err(format!("FPU opcode63 XO={xo} unsupported")),
+                };
             },
             17=>return Err(format!("sc: guest syscall, r0=0x{:X}",self.gpr[0])),
             _=>return Err(format!("unsupported opcode {op} at PC=0x{:08X} ins={ins:08X}",self.pc)),
@@ -145,4 +199,18 @@ use super::*;
     c.lr=8;c.step_mut(&mut m).unwrap();assert_eq!(c.gpr[0],8);c.lr=0;c.step_mut(&mut m).unwrap();assert_eq!(c.lr,8);c.step_mut(&mut m).unwrap();assert_eq!(c.pc,8);
 }
 #[test]fn unknown_safe(){let m=Memory::new(4);let mut c=Cpu::new();let err=c.step(&m).unwrap_err();assert!(err.contains("unsupported"));}
+    #[test]fn indexed_load_store_and_fpu(){
+        let mut m=Memory::new(128);let mut c=Cpu::new();
+        c.gpr[3]=12;c.gpr[4]=16;c.gpr[5]=0x12345678;
+        // stwx r5,r3,r4 ; lwzx r6,r3,r4
+        let stwx=(31u32<<26)|(5<<21)|(3<<16)|(4<<11)|(151<<1);
+        let lwzx=(31u32<<26)|(6<<21)|(3<<16)|(4<<11)|(23<<1);
+        m.write(0,&stwx.to_be_bytes()).unwrap();m.write(4,&lwzx.to_be_bytes()).unwrap();
+        c.step_mut(&mut m).unwrap();c.step_mut(&mut m).unwrap();
+        assert_eq!(c.gpr[6],0x12345678);
+        c.fpr[2]=1.5;c.fpr[3]=2.25;
+        let fadd=(63u32<<26)|(4<<21)|(2<<16)|(3<<11)|(21<<1);
+        m.write(8,&fadd.to_be_bytes()).unwrap();c.step_mut(&mut m).unwrap();
+        assert_eq!(c.fpr[4],3.75);
+    }
 }
