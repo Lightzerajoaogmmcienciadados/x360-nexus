@@ -373,19 +373,22 @@ public final class MainActivity extends Activity {
         heading("Biblioteca de jogos",
             "Capas offline para qualquer jogo de Xbox 360. Selecione uma imagem local por jogo ou importe várias imagens com nomes correspondentes.");
         LinearLayout pick=panel("ISO / XEX / STFS / GOD / XBLA",
-            "Seus backups permanecem no celular. O aplicativo lê metadados, não inicia jogos comerciais.");
+            "Seus arquivos permanecem no celular. O núcleo Rust lê metadados; o motor Xenia integrado tenta executar jogos compatíveis.");
         add(content,pick,15);
         Button importGame=button("+ Adicionar jogo ou arquivo");
         add(pick,importGame,12);
-        LinearLayout xboxBackend=panel("EXECUÇÃO DE JOGOS — BACKEND XENIA",
-            "Para executar ISO/XEX: instale o XenDroid Mali separadamente. O X360 Nexus compartilha seu arquivo por acesso temporário de leitura; a execução acontece no outro aplicativo.");
+        boolean xeniaIntegrated=ExternalXboxBackend.isIntegrated(this);
+        LinearLayout xboxBackend=panel("EXECUÇÃO DE JOGOS — MOTOR XENIA",
+            xeniaIntegrated
+                ?"Motor Xenia Mali integrado ao APK. Selecione seu arquivo ISO/XEX para iniciar no processo nativo do emulador."
+                :"Motor Xenia externo: instale o XenDroid Mali para executar arquivos ISO/XEX.");
         add(content,xboxBackend,13);
         TextView backendState=text(ExternalXboxBackend.diagnostic(this),12,LIGHT,false);
         add(xboxBackend,backendState,9);
-        Button installBackend=outlined("Obter XenDroid Mali no GitHub");
+        Button installBackend=outlined(xeniaIntegrated?"Abrir configurações do Xenia Mali":"Obter XenDroid Mali no GitHub");
         add(xboxBackend,installBackend,9);
         installBackend.setOnClickListener(v->ExternalXboxBackend.openProject(this));
-        Button checkBackend=outlined("Verificar se está instalado");
+        Button checkBackend=outlined("Atualizar diagnóstico do motor");
         add(xboxBackend,checkBackend,8);
         checkBackend.setOnClickListener(v->backendState.setText(ExternalXboxBackend.diagnostic(this)));
         importGame.setOnClickListener(v->{

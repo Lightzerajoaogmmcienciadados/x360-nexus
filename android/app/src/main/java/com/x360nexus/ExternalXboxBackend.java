@@ -59,7 +59,7 @@ public final class ExternalXboxBackend {
             +"\nGPU Mali: compatibilidade depende do modelo/driver"
             +(isIntegrated(ctx)
                 ?"\nMotor Xenia integrado no APK (processo :emu)."
-                :"\nMotor Xenia instalado externamente ao X360 Nexus.");
+                :"\nMotor Xenia instalado externamente ao X360 Nexus.")
             +"\nNao garante inicializacao nem desempenho de jogos.";
     }
 
