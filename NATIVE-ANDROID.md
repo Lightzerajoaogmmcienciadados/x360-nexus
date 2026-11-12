@@ -1,4 +1,4 @@
-# X360 Nexus — Native Android Experimental (6.5)
+# X360 Nexus — Native Android Experimental (6.6)
 
 Native Android APK: Java/Android SDK, OpenGL ES 2, Android AudioTrack and Rust JNI (ARM64-v8a).
 
@@ -22,7 +22,7 @@ Xbox kernel services, XMA decoding and compatibility for Forza/Minecraft.
 
 ## Build
 
-GitHub Actions: `.github/workflows/x360-native-android-v65.yml`, branch `feature/x360-nexus-native-v6.5`.
+GitHub Actions: `.github/workflows/x360-native-android-v66.yml`, branch `feature/x360-nexus-native-v6.6`.
 
 `cargo test --manifest-path core/Cargo.toml`
 
@@ -83,3 +83,17 @@ Use only game files that you are authorized to use.
 - Working v6.4 Android haptic test and vibration preferences retained.
 - Not an Xbox 360 Xenos emulator: no actual Xenos command decoding,
   shader translation, EDRAM tiling, texture formats or commercial game execution.
+
+## Version 6.6 — broader experimental diagnostics
+
+- Additional **PowerPC** opcodes: rlwinm, lha, lbzu, lwzu, stwu, slw/srw, cmplw and bctr.
+- A **cooperative** diagnostic kernel thread scheduler (Ready/Waiting/Stopped).
+- Stereo **PCM mixing with saturation** and basic linear resampling.
+- Read-only recognition of **STFS CON, LIVE and PIRS** headers; not full container mounting.
+- The native app now reports unknown file signatures using the new Rust inspector.
+- A new **Compat Lab** panel runs combined native CPU, kernel, audio and GPU tests.
+- Existing Z-buffer/Gouraud/cube GPU lab, game cover support and Android vibration preserved.
+
+Commercial Xbox 360 game execution remains unsupported. It still lacks an Xbox 360
+XEX image loader, decryption, full Xenon PPC/VMX128/MMU, XAM/Xbox kernel APIs,
+Xenos register/packet/shader emulation, and XMA audio decoding.

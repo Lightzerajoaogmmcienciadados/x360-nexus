@@ -111,3 +111,14 @@ mod raw_ppc_tests {
         assert!(execute_raw_powerpc(&[1,2,3],20).is_err());
     }
 }
+
+#[no_mangle]
+pub extern "system" fn Java_com_x360nexus_MainActivity_nativeInspectPackage(
+    mut env:JNIEnv,_:JObject,data:JByteArray
+)->jstring{
+    let msg=match env.convert_byte_array(data){
+        Ok(bytes)=>loader::package_report(&bytes),
+        Err(err)=>format!("Erro ao ler cabecalho do pacote: {err}")
+    };
+    jstr(env,msg)
+}

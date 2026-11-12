@@ -13,6 +13,7 @@ pub mod memory;
 pub mod galaxy;
 mod galaxy_jni;
 mod native_jni;
+mod compat_lab;
 use audio::Audio;
 use cpu::Cpu;
 use gpu::Gpu;

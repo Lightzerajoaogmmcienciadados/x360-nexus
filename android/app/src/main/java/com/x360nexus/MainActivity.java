@@ -75,6 +75,8 @@ public final class MainActivity extends Activity {
     }
 
     private native String nativeSelfTest();
+    private native String nativeSubsystemDiagnostics();
+    private native String nativeInspectPackage(byte[] header);
     private native String nativeRunDemo();
     private native int[] nativeGpuLabFrame(int mode);
     private native String nativeGpuLabReport(int mode);
@@ -235,9 +237,21 @@ public final class MainActivity extends Activity {
     }
     private void core() {
         heading("Núcleo Rust / Xenon","Ferramentas executadas localmente no aparelho.");
+        LinearLayout subsystem=panel("COMPAT LAB 6.6 — DIAGNÓSTICO AMPLIADO",
+            "Execute testes do interpretador PowerPC, escalonador experimental, mixer de áudio PCM e GPU 3D.");
+        add(content,subsystem,13);
+        Button runAll=button("Executar diagnóstico de todos os subsistemas");
+        add(subsystem,runAll,10);
+        TextView subsystemStatus=text("Pronto para testar os módulos nativos.",12,LIGHT,false);
+        add(subsystem,subsystemStatus,12);
+        runAll.setOnClickListener(v->{
+            if(!RUST_AVAILABLE){subsystemStatus.setText("Biblioteca Rust indisponível");return;}
+            try{subsystemStatus.setText(nativeSubsystemDiagnostics());}
+            catch(Throwable err){subsystemStatus.setText("Falha no diagnóstico: "+err.getMessage());}
+        });
         status("CPU PowerPC experimental",
-            "Instruções: addi/addis, mulli, subfic, OR/AND/XOR, comparações, load/store, branches, LR/CTR e extensões.\nAinda faltam MMU, VMX128, SMT, JIT e grande parte da ISA.");
-        status("Kernel e memória","Memória big-endian, regiões virtuais de 4 KiB com permissões R/W/X e threads experimentais. Não é uma MMU Xbox 360.");
+            "Instruções: addi/addis, mulli, subfic, rlwinm, loads/stores com atualização, lha, shifts, branches via LR/CTR, comparações e operações inteiras.\nAinda faltam MMU, VMX128, SMT, JIT e grande parte da ISA.");
+        status("Kernel e memória","Memória big-endian e regiões virtuais 4 KiB R/W/X; threads com estados Ready/Waiting/Stopped e escalonamento cooperativo. Não é o kernel Xbox 360.");
         status("GPU","Framebuffer RGBA em Rust + cena OpenGL ES 2.0 no Android. Sem tradução de shaders ou comandos Xenos.");
         LinearLayout xenos=panel("XENOS LAB v6.5 — GPU EXPERIMENTAL",
             "Além das cenas v6.4: Z-buffer, teste de profundidade, triângulos indexados, cores interpoladas, filtragem bilinear de textura e cubo 3D projetado. Rasterizador Rust, não GPU Xenos real.");
@@ -749,9 +763,9 @@ public final class MainActivity extends Activity {
         return super.onGenericMotionEvent(event);
     }
     private void about() {
-        heading("Sobre o X360 Nexus","Build Android 6.5 • Experimental nativo");
+        heading("Sobre o X360 Nexus","Build Android 6.6 • Experimental nativo");
         status("ARQUITETURA","Android SDK + OpenGL ES 2.0 + AudioTrack + Rust JNI aarch64.");
-        status("SUPORTE ATUAL","Leitura XDVDFS/XEX2 e Title ID, CPU PowerPC parcial, memória virtual experimental, Xenos LAB 6.5 (Z-buffer, Gouraud, bilinear, cubo 3D), GPU OpenGL ES, áudio PCM, capas, busca, favoritos e vibração Android.");
+        status("SUPORTE ATUAL","Leitura ISO/XEX2 e identificação CON/LIVE/PIRS, instruções PowerPC adicionais, escalonador de diagnóstico, mixer PCM estéreo e resampler, GPU LAB 3D, controles, capas e vibração Android.");
         status("LIMITAÇÕES IMPORTANTES","Sem JIT PPC, MMU Xbox completa, APIs XAM/Xbox Kernel, decodificador XMA, tradutor Xenos, renderização 360 e execução de jogos comerciais.");
         status("PRIVACIDADE","Arquivos escolhidos permanecem no aparelho. A biblioteca guarda URIs locais, nomes, tamanhos e resultados de inspeção.");
     }
@@ -821,7 +835,7 @@ public final class MainActivity extends Activity {
                 }
                 if(n>=4 && h[0]=='X'&&h[1]=='E'&&h[2]=='X'&&h[3]=='2')
                     result=nativeInspectXex(Arrays.copyOf(h,n));
-                else result="Arquivo catalogado: sem execução. Formato não identificado como XEX2.";
+                else result=nativeInspectPackage(Arrays.copyOf(h,n));
             }
         }catch(Throwable e){result="Falha ao inspecionar: "+e.getMessage();}
         final String finalResult=result;

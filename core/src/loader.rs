@@ -242,3 +242,34 @@ mod disc_boot_tests {
         assert_eq!(inspect_xex_title_id(&b),None);
     }
 }
+
+/// Read-only identification of STFS package signature. It is metadata detection,
+/// not unlocking, decryption, mounting or boot of XBLA/GOD games.
+#[derive(Debug,Clone,Copy,PartialEq,Eq)]
+pub enum PackageKind{Con,Live,Pirs,Xex2,Unknown}
+pub fn identify_package(bytes:&[u8])->PackageKind{
+    if bytes.starts_with(b"CON "){PackageKind::Con}
+    else if bytes.starts_with(b"LIVE"){PackageKind::Live}
+    else if bytes.starts_with(b"PIRS"){PackageKind::Pirs}
+    else if bytes.starts_with(b"XEX2"){PackageKind::Xex2}
+    else {PackageKind::Unknown}
+}
+pub fn package_report(bytes:&[u8])->String{
+    match identify_package(bytes){
+        PackageKind::Con=>"STFS CON identificado: pacote de conteudo, assinatura nao verificada; leitura de metadados apenas".into(),
+        PackageKind::Live=>"STFS LIVE identificado: conteudo Xbox 360, sem descriptografia ou execucao".into(),
+        PackageKind::Pirs=>"STFS PIRS identificado: formato de pacote, sem execucao".into(),
+        PackageKind::Xex2=>"XEX2 reconhecido: cabeçalho de executavel Xbox 360, sem inicializacao".into(),
+        PackageKind::Unknown=>"Formato nao identificado. Arquivo mantido no catalogo, sem execucao".into(),
+    }
+}
+#[cfg(test)]mod package_tests{
+    use super::*;
+    #[test]fn recognizes_stfs_headers(){
+        assert_eq!(identify_package(b"CON \0\0\0\0"),PackageKind::Con);
+        assert_eq!(identify_package(b"LIVE\0\0\0"),PackageKind::Live);
+        assert_eq!(identify_package(b"PIRS\0\0\0"),PackageKind::Pirs);
+        assert_eq!(identify_package(b"XEX2"),PackageKind::Xex2);
+        assert_eq!(identify_package(b"bad"),PackageKind::Unknown);
+    }
+}

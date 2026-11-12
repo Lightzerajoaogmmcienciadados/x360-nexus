@@ -67,6 +67,42 @@ impl Cpu {
                 self.gpr[ra] = self.gpr[rt] & ((ins as u16 as u64) << 16);
                 self.set_cr0(self.gpr[ra] as i64, 0);
             },
+            21 => { // rlwinm: 32-bit rotate-mask (Xenon subset)
+                let sh=((ins>>11)&31) as u32;
+                let mb=((ins>>6)&31) as u32;
+                let me=((ins>>1)&31) as u32;
+                let mut mask=0u32;
+                for i in 0..32 {
+                    if (mb<=me && i>=mb && i<=me)||(mb>me && (i>=mb||i<=me)){
+                        mask|=1u32<<(31-i);
+                    }
+                }
+                self.gpr[ra]=((self.gpr[rt] as u32).rotate_left(sh)&mask) as u64;
+            }
+            33 => { // lwzu (update base register)
+                if ra==0||ra==rt{return Err("invalid lwzu operands".into());}
+                let addr=self.dword(ra,immediate)?;
+                let value=memory.read_u32_be(addr).map_err(str::to_owned)? as u64;
+                self.gpr[rt]=value;
+                self.gpr[ra]=addr as u64;
+            }
+            35 => { // lbzu
+                if ra==0||ra==rt{return Err("invalid lbzu operands".into());}
+                let addr=self.dword(ra,immediate)?;
+                let value=memory.read(addr,1).map_err(str::to_owned)?[0] as u64;
+                self.gpr[rt]=value;self.gpr[ra]=addr as u64;
+            }
+            37 => { // stwu
+                if ra==0{return Err("invalid stwu base".into());}
+                let addr=self.dword(ra,immediate)?;
+                memory.write(addr,&(self.gpr[rt] as u32).to_be_bytes()).map_err(str::to_owned)?;
+                self.gpr[ra]=addr as u64;
+            }
+            42 => { // lha signed halfword
+                let addr=self.dword(ra,immediate)?;
+                let bytes=memory.read(addr,2).map_err(str::to_owned)?;
+                self.gpr[rt]=i16::from_be_bytes([bytes[0],bytes[1]]) as i64 as u64;
+            }
             32 => {
                 let addr = self.dword(ra, immediate)?;
                 self.gpr[rt] = memory.read_u32_be(addr).map_err(str::to_owned)? as u64;
@@ -120,14 +156,27 @@ impl Cpu {
             }
             19 => {
                 let xo = (ins >> 1) & 1023;
-                if xo != 16 || (ins >> 21) & 31 != 20 {
-                    return Err(format!("unsupported branch control XO={xo}"));
+                if (ins >> 21) & 31 != 20 {
+                    return Err(format!("unsupported branch BO with XO={xo}"));
                 }
-                next = (self.lr & !3) as usize;
+                next = match xo {
+                    16 => (self.lr & !3) as usize,
+                    528 => (self.ctr & !3) as usize, // bctr
+                    _ => return Err(format!("unsupported branch control XO={xo}")),
+                };
             }
             31 => {
                 let xo = (ins >> 1) & 1023;
                 match xo {
+                    24 => { // slw
+                        let shift=(self.gpr[rb]&63) as u32;
+                        self.gpr[ra]=if shift>=32 {0} else {(self.gpr[rt] as u32).wrapping_shl(shift) as u64};
+                    }
+                    536 => { // srw
+                        let shift=(self.gpr[rb]&63) as u32;
+                        self.gpr[ra]=if shift>=32 {0} else {(self.gpr[rt] as u32).wrapping_shr(shift) as u64};
+                    }
+                    32 => self.set_cr0_unsigned(self.gpr[ra] as u32 as u64, self.gpr[rb] as u32 as u64),
                     266 => self.gpr[rt] = self.gpr[ra].wrapping_add(self.gpr[rb]),
                     235 => self.gpr[rt] = (self.gpr[ra] as i32)
                         .wrapping_mul(self.gpr[rb] as i32) as i64 as u64,
@@ -204,6 +253,33 @@ mod tests {
         let mut c=Cpu::new();c.lr=0x1234;
         c.step(&mut mem).unwrap();assert_eq!(c.gpr[3],0x1234);
         c.lr=0;c.step(&mut mem).unwrap();assert_eq!(c.lr,0x1234);
+    }
+    #[test] fn rotates_and_masks_32bit() {
+        let mut mem=Memory::new(32);
+        let rlwinm=(21u32<<26)|(3<<21)|(4<<16)|(8<<11)|(0<<6)|(31<<1);
+        mem.write(0,&rlwinm.to_be_bytes()).unwrap();
+        let mut cpu=Cpu::new();cpu.gpr[3]=0x0100_0000;
+        cpu.step(&mut mem).unwrap();assert_eq!(cpu.gpr[4],1);
+    }
+    #[test] fn byte_update_and_signed_halfword() {
+        let mut mem=Memory::new(128);
+        let lbzu=(35u32<<26)|(3<<21)|(4<<16)|1;
+        let lha=(42u32<<26)|(5<<21)|(0<<16)|64;
+        mem.write(0,&lbzu.to_be_bytes()).unwrap();
+        mem.write(4,&lha.to_be_bytes()).unwrap();
+        mem.write(65,&[0x80]).unwrap();
+        mem.write(64,&[0xff,0xfe]).unwrap();
+        let mut cpu=Cpu::new();cpu.gpr[4]=64;
+        cpu.run_steps(&mut mem,2).unwrap();
+        assert_eq!(cpu.gpr[3],0xfe);
+        assert_eq!(cpu.gpr[4],65);
+        assert_eq!(cpu.gpr[5],(-2i64) as u64);
+    }
+    #[test] fn bctr_executes_target() {
+        let mut mem=Memory::new(64);
+        mem.write(0,&0x4e80_0420u32.to_be_bytes()).unwrap();
+        let mut cpu=Cpu::new();cpu.ctr=32;cpu.step(&mut mem).unwrap();
+        assert_eq!(cpu.pc,32);
     }
     #[test] fn rejects_unknown_opcode() {
         let mut mem=Memory::new(8);mem.write(0,&[0xff,0xff,0xff,0xff]).unwrap();
