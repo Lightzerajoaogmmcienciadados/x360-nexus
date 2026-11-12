@@ -1,0 +1,7 @@
+[package]
+name = "mc360-core"
+version = "0.1.0"
+edition = "2021"
+[lib]
+name = "mc360_core"
+crate-type = ["staticlib"]
