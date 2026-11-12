@@ -239,8 +239,8 @@ public final class MainActivity extends Activity {
             "Instruções: addi/addis, mulli, subfic, OR/AND/XOR, comparações, load/store, branches, LR/CTR e extensões.\nAinda faltam MMU, VMX128, SMT, JIT e grande parte da ISA.");
         status("Kernel e memória","Memória big-endian, regiões virtuais de 4 KiB com permissões R/W/X e threads experimentais. Não é uma MMU Xbox 360.");
         status("GPU","Framebuffer RGBA em Rust + cena OpenGL ES 2.0 no Android. Sem tradução de shaders ou comandos Xenos.");
-        LinearLayout xenos=panel("XENOS LAB — GPU EXPERIMENTAL",
-            "Pipeline de comandos original em Rust: triângulos, recorte (scissor), texturas procedurais e alpha blending. Não interpreta comandos da GPU Xenos real.");
+        LinearLayout xenos=panel("XENOS LAB v6.5 — GPU EXPERIMENTAL",
+            "Além das cenas v6.4: Z-buffer, teste de profundidade, triângulos indexados, cores interpoladas, filtragem bilinear de textura e cubo 3D projetado. Rasterizador Rust, não GPU Xenos real.");
         add(content,xenos,12);
         ImageView gpuPreview=new ImageView(this);
         gpuPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -250,18 +250,21 @@ public final class MainActivity extends Activity {
         xenos.addView(gpuPreview,previewParams);
         TextView gpuInfo=text("Selecione uma cena para testar o pipeline de desenho.",12,MUTED,false);
         add(xenos,gpuInfo,8);
-        LinearLayout gpuModes=linear(true);
-        String[] labels={"Pista","Triângulos","Texturas"};
-        for(int mode=0;mode<3;mode++){
-            final int selectedMode=mode;
-            Button option=outlined(labels[mode]);
-            LinearLayout.LayoutParams op=new LinearLayout.LayoutParams(0,dp(55),1f);
-            op.setMargins(dp(2),0,dp(2),0);
-            gpuModes.addView(option,op);
-            option.setOnClickListener(v->renderGpuLab(selectedMode,gpuPreview,gpuInfo));
+        String[] labels={"Pista","Triângulos","Texturas","Z-buffer","Gouraud","Cubo 3D"};
+        for(int row=0;row<2;row++){
+            LinearLayout gpuModes=linear(true);
+            for(int column=0;column<3;column++){
+                final int selectedMode=row*3+column;
+                Button option=outlined(labels[selectedMode]);
+                option.setTextSize(12);
+                LinearLayout.LayoutParams op=new LinearLayout.LayoutParams(0,dp(55),1f);
+                op.setMargins(dp(2),0,dp(2),0);
+                gpuModes.addView(option,op);
+                option.setOnClickListener(v->renderGpuLab(selectedMode,gpuPreview,gpuInfo));
+            }
+            add(xenos,gpuModes,row==0?12:9);
         }
-        add(xenos,gpuModes,12);
-        if(RUST_AVAILABLE)renderGpuLab(0,gpuPreview,gpuInfo);
+        if(RUST_AVAILABLE)renderGpuLab(5,gpuPreview,gpuInfo);
         status("Análise XEX2","Leitura da tabela opcional (chave e valor) e localização do Default.xex dentro da ISO. O módulo comercial não é iniciado.");
         LinearLayout audio=panel("ÁUDIO NATIVO","Aperte para ouvir um sinal de diagnóstico sintetizado pelo núcleo Rust.");
         add(content,audio,12);
@@ -746,9 +749,9 @@ public final class MainActivity extends Activity {
         return super.onGenericMotionEvent(event);
     }
     private void about() {
-        heading("Sobre o X360 Nexus","Build Android 6.4 • Experimental nativo");
+        heading("Sobre o X360 Nexus","Build Android 6.5 • Experimental nativo");
         status("ARQUITETURA","Android SDK + OpenGL ES 2.0 + AudioTrack + Rust JNI aarch64.");
-        status("SUPORTE ATUAL","Leitura XDVDFS/XEX2 e Title ID, CPU PowerPC limitada, memória virtual experimental, Xenos LAB com rasterização de triângulos e comandos gráficos próprios, GPU OpenGL ES, áudio PCM, capas, busca, favoritos e teste de vibração Android.");
+        status("SUPORTE ATUAL","Leitura XDVDFS/XEX2 e Title ID, CPU PowerPC parcial, memória virtual experimental, Xenos LAB 6.5 (Z-buffer, Gouraud, bilinear, cubo 3D), GPU OpenGL ES, áudio PCM, capas, busca, favoritos e vibração Android.");
         status("LIMITAÇÕES IMPORTANTES","Sem JIT PPC, MMU Xbox completa, APIs XAM/Xbox Kernel, decodificador XMA, tradutor Xenos, renderização 360 e execução de jogos comerciais.");
         status("PRIVACIDADE","Arquivos escolhidos permanecem no aparelho. A biblioteca guarda URIs locais, nomes, tamanhos e resultados de inspeção.");
     }

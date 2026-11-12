@@ -4,6 +4,7 @@ pub mod audio;
 pub mod cpu;
 pub mod gpu;
 pub mod xenos_lab;
+pub mod xenos_pipeline;
 mod xenos_lab_jni;
 pub mod input;
 pub mod kernel;

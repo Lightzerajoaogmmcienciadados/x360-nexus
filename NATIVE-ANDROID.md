@@ -1,4 +1,4 @@
-# X360 Nexus — Native Android Experimental (6.4)
+# X360 Nexus — Native Android Experimental (6.5)
 
 Native Android APK: Java/Android SDK, OpenGL ES 2, Android AudioTrack and Rust JNI (ARM64-v8a).
 
@@ -22,7 +22,7 @@ Xbox kernel services, XMA decoding and compatibility for Forza/Minecraft.
 
 ## Build
 
-GitHub Actions: `.github/workflows/x360-native-android-v64.yml`, branch `feature/x360-nexus-native-v6.4`.
+GitHub Actions: `.github/workflows/x360-native-android-v65.yml`, branch `feature/x360-nexus-native-v6.5`.
 
 `cargo test --manifest-path core/Cargo.toml`
 
@@ -66,3 +66,20 @@ Use only game files that you are authorized to use.
   shader microcode, EDRAM or commercial Xbox 360 game GPU emulation.
 - Device haptic test must be verified on the phone: API success alone cannot
   prove physical vibration. Galaxy/Android settings may disable it.
+
+
+## Version 6.5: experimental 3D GPU pipeline
+- New software rasterizer in core/src/xenos_pipeline.rs alongside existing v6.4 GPU LAB.
+- Z-buffer (depth compare), indexed triangle meshes, per-vertex color interpolation
+  (Gouraud shading), bilinear sampling of procedural 8x8 textures, scissor rectangle.
+- A perspective-projected textured cube drawn from 12 triangles (two per cube face).
+- New Android scenes: Z-buffer, Gouraud, Cubo 3D, in addition
+  to the original Pista, Triângulos, Texturas.
+- 320x180 CPU software render, copied through Rust JNI into Android Bitmap;
+  counts draw calls, indexed triangles, shaded fragments, Z-test rejects,
+  and bilinear texture samples.
+- Rust unit tests for depth order, color interpolation, filtering,
+  index and NaN validation, 3D scene generation.
+- Working v6.4 Android haptic test and vibration preferences retained.
+- Not an Xbox 360 Xenos emulator: no actual Xenos command decoding,
+  shader translation, EDRAM tiling, texture formats or commercial game execution.
