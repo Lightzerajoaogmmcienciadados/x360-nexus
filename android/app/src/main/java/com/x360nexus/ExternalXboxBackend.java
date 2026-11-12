@@ -30,7 +30,11 @@ public final class ExternalXboxBackend {
         "https://github.com/DEGROUCHO/xendroid-mali/releases/latest";
     private ExternalXboxBackend(){}
 
+    public static boolean isIntegrated(Context ctx){
+        return PACKAGE.equals(ctx.getPackageName());
+    }
     public static boolean isInstalled(Context ctx){
+        if(isIntegrated(ctx))return true;
         try{
             ctx.getPackageManager().getPackageInfo(PACKAGE,0);
             return true;
@@ -40,9 +44,9 @@ public final class ExternalXboxBackend {
     }
 
     public static String diagnostic(Context ctx){
-        String backend=isInstalled(ctx)
-            ?"Emulador XenDroid instalado ("+PACKAGE+")"
-            :"Emulador XenDroid nao instalado";
+        String backend=isIntegrated(ctx)
+            ?"Motor Xenia/XenDroid Mali INTEGRADO neste APK"
+            :(isInstalled(ctx)?"Motor XenDroid instalado em outro aplicativo":"Motor XenDroid nao instalado");
         boolean arm64=false;
         for(String abi: Build.SUPPORTED_ABIS){
             if("arm64-v8a".equals(abi))arm64=true;
@@ -96,6 +100,17 @@ public final class ExternalXboxBackend {
     }
 
     public static void openProject(Activity activity){
+        if(isIntegrated(activity)){
+            try{
+                Intent full=new Intent();
+                full.setClassName(PACKAGE,"xendroid.compose.MainActivity");
+                activity.startActivity(full);
+            }catch(RuntimeException e){
+                Toast.makeText(activity,"Falha ao abrir interface Xenia: "+e.getMessage(),
+                    Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
         try{
             Intent browser=new Intent(Intent.ACTION_VIEW,Uri.parse(RELEASE_PAGE));
             activity.startActivity(browser);

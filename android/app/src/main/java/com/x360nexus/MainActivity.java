@@ -233,11 +233,18 @@ public final class MainActivity extends Activity {
             if(!RUST_AVAILABLE){output.setText("Erro: biblioteca nativa ausente.");return;}
             try{output.setText(nativeRunDemo());}catch(Throwable e){output.setText("Erro JNI: "+e);}
         });
-        LinearLayout emulator=panel("XBOX 360 REAL — MOTOR XENDROID MALI",
-            "Integração com emulador Xenia/XenDroid instalado separadamente. O X360 Nexus encaminha a ISO, mas NÃO executa o jogo com seu próprio núcleo.");
+        boolean bundledEngine=ExternalXboxBackend.isIntegrated(this);
+        LinearLayout emulator=panel(bundledEngine
+            ?"XENIA MALI — MOTOR NATIVO INTEGRADO"
+            :"XBOX 360 REAL — MOTOR XENDROID MALI EXTERNO",
+            bundledEngine
+            ?"Motor C++/JIT ARM64/Vulkan do XenDroid Mali presente neste APK. A compatibilidade varia por GPU e jogo."
+            :"Integração com emulador Xenia/XenDroid instalado separadamente. Esta edição não contém o motor.");
         add(content,emulator,18);
         add(emulator,text(ExternalXboxBackend.diagnostic(this),12,LIGHT,false),10);
-        Button emulatorSite=outlined("Instalar motor XenDroid Mali");
+        Button emulatorSite=outlined(bundledEngine
+            ?"Abrir interface completa Xenia Mali"
+            :"Instalar motor XenDroid Mali");
         add(emulator,emulatorSite,11);
         emulatorSite.setOnClickListener(v->ExternalXboxBackend.openProject(this));
         Button go=outlined("Abrir biblioteca de jogos");add(content,go,18);
@@ -809,11 +816,14 @@ public final class MainActivity extends Activity {
         return super.onGenericMotionEvent(event);
     }
     private void about() {
-        heading("Sobre o X360 Nexus","Build Android 10.0 • Experimental nativo");
+        heading("Sobre o X360 Nexus","Build Android 10.1 • Xenia Mali integrado");
         status("ARQUITETURA","Android SDK + OpenGL ES 2.0 + AudioTrack + Rust JNI aarch64.");
-        status("SUPORTE ATUAL","GPU LAB v10.0 com benchmark nativo assíncrono e estatísticas, leitura ISO/XEX2/CON/LIVE/PIRS, CPU PowerPC parcial, mixer PCM, controles, capas e vibração Android.");
-        status("EXECUÇÃO COM BACKEND EXTERNO","XenDroid Mali/Xenia ARM64, se instalado: recebe ISO/XEX da biblioteca do X360 Nexus e tenta executar o jogo em seu próprio processo, com driver Vulkan.");
-        status("LIMITAÇÕES IMPORTANTES","O núcleo Rust interno ainda não roda jogos comerciais de Xbox 360. O resultado no emulador externo depende do jogo, CPU ARM64, GPU Mali e drivers.");
+        status("SUPORTE ATUAL","Biblioteca com capas, controles e vibração; GPU LAB Rust; XEX2/ISO e diagnóstico. Edição integrada: runtime Xenia/XenDroid Mali em processo separado dentro deste mesmo APK.");
+        status("MOTOR XENIA MALI",ExternalXboxBackend.isIntegrated(this)
+            ?"Nucleo Xenia ARM64 integrado ao APK. Execucao de jogos ocorre em processo de emulacao proprio (XenDroid), com Vulkan."
+            :"Apenas integracao com motor externo. Instale o emulador XenDroid separadamente.");
+        status("LIMITAÇÕES IMPORTANTES",
+            "O Rust diagnostico nao emula jogos Xbox 360. Mesmo com Xenia incorporado, a inicializacao depende da GPU Mali, driver Vulkan, RAM e compatibilidade de cada jogo.");
         status("PRIVACIDADE","Arquivos escolhidos permanecem no aparelho. A biblioteca guarda URIs locais, nomes, tamanhos e resultados de inspeção.");
     }
     @Override protected void onActivityResult(int request,int result,Intent data){

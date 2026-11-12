@@ -1,4 +1,4 @@
-# X360 Nexus — Native Android Experimental (10.0)
+# X360 Nexus — Xenia Mali Integrado (10.1)
 
 Native Android APK: Java/Android SDK, OpenGL ES 2, Android AudioTrack and Rust JNI (ARM64-v8a).
 
@@ -132,3 +132,16 @@ Android provider permissions, ARM64 memory, shaders and performance may prevent
 games from booting. No retail game compatibility is guaranteed, and this app's
 internal Xenon CPU/Xenos GPU are still limited diagnostic implementations.
 No game files, Xbox system keys or retail games are included.
+
+
+## 10.1 - Integrated Xenia runtime (single APK; experimental)
+
+- Repackages the official XenDroid Ultimate Mali q664 APK under BSD 3-Clause with the original Kotlin UI and Xenia ARM64/Vulkan backend.
+- Original XenDroid Application, emulation process, libe.so, Vulkan runtime and assets remain in the APK.
+- X360 Nexus Java dex and native libx360nexus.so are added, and Nexus is the launcher.
+- Game action launches the XenDroid in-package emulation activity with the selected SAF URI.
+- Original BSD license preserved in assets/X360_NEXUS_XENIA_ENGINE_NOTICES.txt; source at github.com/DEGROUCHO/xendroid-mali.
+- Built using tools/build_xenia_integrated.py and GitHub Actions.
+- Signed custom package uses xendroid.compose; installing alongside release-signed XenDroid can fail with signing mismatch. Uninstalling XenDroid may delete app data.
+- This is binary integration with an open-source Xenia fork, NOT a newly implemented full Xenia core in Rust.
+- Compatibility and performance on Galaxy A17 have not been independently tested. No games, BIOS or keys bundled.
