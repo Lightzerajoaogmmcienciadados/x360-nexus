@@ -237,3 +237,43 @@ Java_com_x360nexus_MainActivity_nativeFetchCodeWindow(JNIEnv* env, jobject, jlon
     env->SetByteArrayRegion(array,0,length,reinterpret_cast<const jbyte*>(bytes.data()));
     return array;
 }
+
+// v4.5 diagnostic snapshot. Rust executes this private COPY of the PE32 image;
+// no 512 MiB allocation and no mutable cross-language aliasing occurs.
+extern "C" JNIEXPORT jlongArray JNICALL
+Java_com_x360nexus_MainActivity_nativePreparedInfo(JNIEnv* env,jobject){
+    std::lock_guard<std::mutex> lock(g_memory_mutex);
+    if(!g_prepared || !g_ram)return nullptr;
+    const jlong data[]{static_cast<jlong>(g_prepared->base),static_cast<jlong>(g_prepared->pc),
+        static_cast<jlong>(g_prepared->image_size),static_cast<jlong>(g_prepared->imports.size()),
+        static_cast<jlong>(g_ram->allocated_bytes())};
+    jlongArray out=env->NewLongArray(5);
+    if(out)env->SetLongArrayRegion(out,0,5,data);
+    return out;
+}
+extern "C" JNIEXPORT jlongArray JNICALL
+Java_com_x360nexus_MainActivity_nativeExecutableRanges(JNIEnv* env,jobject){
+    std::lock_guard<std::mutex> lock(g_memory_mutex);
+    if(!g_prepared || g_prepared->executable_ranges.size()>128)return nullptr;
+    std::vector<jlong> values;
+    for(const auto& section:g_prepared->executable_ranges){
+        values.push_back(section.first);values.push_back(section.second);
+    }
+    jlongArray out=env->NewLongArray(static_cast<jsize>(values.size()));
+    if(out&&!values.empty())env->SetLongArrayRegion(out,0,static_cast<jsize>(values.size()),values.data());
+    return out;
+}
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_x360nexus_MainActivity_nativePreparedSnapshot(JNIEnv* env,jobject){
+    std::lock_guard<std::mutex> lock(g_memory_mutex);
+    constexpr uint32_t max_snapshot=16*1024*1024;
+    if(!g_ram || !g_prepared || g_prepared->image_size==0 || g_prepared->image_size>max_snapshot)return nullptr;
+    const auto size=g_prepared->image_size;
+    try{
+        std::vector<uint8_t> copy(size);
+        g_ram->read(g_prepared->base,copy.data(),copy.size());
+        jbyteArray out=env->NewByteArray(static_cast<jsize>(size));
+        if(out)env->SetByteArrayRegion(out,0,static_cast<jsize>(size),reinterpret_cast<const jbyte*>(copy.data()));
+        return out;
+    }catch(...){return nullptr;}
+}
