@@ -9,10 +9,11 @@ pub struct Kernel{
     next_id:u32,threads:BTreeMap<u32,ThreadState>,ticks:u64,
     next_tls:u32,tls:BTreeMap<u32,u64>,next_heap:u64,
     allocations:BTreeMap<u64,usize>,critical:BTreeMap<u64,u32>,
-    safe_stubs:BTreeSet<(String,u32)>,
+    safe_stubs:BTreeSet<(String,u32)>,events:BTreeMap<u64,bool>, video_ready:bool,
+    swaps:u64,display_mode:(u32,u32),
 }
 impl Kernel {
-    pub fn new()->Self{Self{next_id:1,threads:BTreeMap::new(),ticks:0,next_tls:0,tls:BTreeMap::new(),next_heap:0,allocations:BTreeMap::new(),critical:BTreeMap::new(),safe_stubs:BTreeSet::new()}}
+    pub fn new()->Self{Self{next_id:1,threads:BTreeMap::new(),ticks:0,next_tls:0,tls:BTreeMap::new(),next_heap:0,allocations:BTreeMap::new(),critical:BTreeMap::new(),safe_stubs:BTreeSet::new(),events:BTreeMap::new(),video_ready:false,swaps:0,display_mode:(1280,720)}}
     pub fn create_thread(&mut self)->u32{let id=self.next_id;self.next_id=self.next_id.saturating_add(1);self.threads.insert(id,ThreadState::Ready);id}
     pub fn set_thread_state(&mut self,id:u32,state:ThreadState)->Result<(),&'static str>{*self.threads.get_mut(&id).ok_or("unknown thread")?=state;Ok(())}
     pub fn state(&self,id:u32)->Option<ThreadState>{self.threads.get(&id).copied()}
@@ -57,6 +58,36 @@ impl Kernel {
             8 => {let depth=self.critical.get_mut(&gpr[3]).ok_or("uninitialized critical section")?;*depth=depth.saturating_add(1);"RtlEnterCriticalSection"},
             9 => {let depth=self.critical.get_mut(&gpr[3]).ok_or("uninitialized critical section")?;if *depth==0{return Err("critical section not held".into())};*depth-=1;"RtlLeaveCriticalSection"},
             10=>{mem.write_u32_be(a,1280).map_err(str::to_string)?;mem.write_u32_be(a+4,720).map_err(str::to_string)?;mem.write_u32_be(a+8,60).map_err(str::to_string)?;mem.write_u32_be(a+12,32).map_err(str::to_string)?;"VdQueryVideoMode (synthetic 720p descriptor)"},
+            11=>{self.events.insert(gpr[3],gpr[4]!=0);"KeInitializeEvent (test ABI)"},
+            12=>{*self.events.get_mut(&gpr[3]).ok_or("event not initialized")?=true;"KeSetEvent (test ABI)"},
+            13=>{
+                let event=self.events.get_mut(&gpr[3]).ok_or("event not initialized")?;
+                if !*event{gpr[3]=0x102;return Ok("KeWaitForSingleObject: STATUS_TIMEOUT (nonblocking test)".into());}
+                *event=false;"KeWaitForSingleObject"
+            },
+            14=>{ // MmAllocatePhysicalMemory (synthetic): returns offset inside snapshot.
+                let size=(gpr[3] as usize).max(1);
+                if size>1024*1024{return Err("physical allocation exceeds diagnostic limit".into());}
+                if self.next_heap==0{self.next_heap=(mem.base()+0x10000+4095)&!4095;}
+                let start=(self.next_heap+4095)&!4095;
+                let end=start.checked_add(((size as u64)+4095)&!4095).ok_or("out of memory")?;
+                if end>mem.base()+mem.len() as u64{return Err("out of guest memory".into());}
+                self.next_heap=end;self.allocations.insert(start,size);
+                gpr[3]=start;return Ok(format!("MmAllocatePhysicalMemory test -> 0x{start:X}"));
+            },
+            15=>{ // VdSwap: only counts submitted frames, no real Xenos content.
+                if !self.video_ready{return Err("VdSwap: engine not initialized".into());}
+                self.swaps=self.swaps.saturating_add(1);
+                "VdSwap (test frame counter only)"
+            },
+            16=>return Err("NtOpenFile requires guest filesystem handles; not implemented".into()),
+            17=>return Err("NtReadFile requires guest filesystem handles; not implemented".into()),
+            18=>{self.video_ready=true;"VdInitializeEngines (diagnostic only)"},
+            19=>{ // VdSetDisplayMode: a mode request, not an Xenos output mode.
+                let (w,h)=(gpr[3] as u32,gpr[4] as u32);
+                if !(320..=3840).contains(&w)||!(240..=2160).contains(&h){return Err("unsupported synthetic display mode".into());}
+                self.display_mode=(w,h);"VdSetDisplayMode (request logged only)"
+            },
             _=>return Err(format!("unknown private HLE service {id}")),
         };
         gpr[3]=0;
@@ -67,5 +98,14 @@ impl Default for Kernel{fn default()->Self{Self::new()}}
 #[cfg(test)]mod tests {
  use super::*;
  #[test]fn tls_and_safe_imports(){let mut k=Kernel::new();let mut m=Memory::new(1024*1024);let mut g=[0u64;32];k.dispatch_private(3,&mut g,&mut m).unwrap();let slot=g[3];g[3]=slot;g[4]=55;k.dispatch_private(5,&mut g,&mut m).unwrap();g[3]=slot;k.dispatch_private(4,&mut g,&mut m).unwrap();assert_eq!(g[3],55);assert!(k.dispatch_secondary_stub("xam.xex",99,&mut g).is_err());k.register_secondary_stub("xam.xex",99).unwrap();assert!(k.dispatch_secondary_stub("xam.xex",99,&mut g).unwrap().contains("WARNING"));}
+ #[test]fn events_and_video(){
+    let mut k=Kernel::new();let mut m=Memory::new(4096);let mut regs=[0u64;32];
+    regs[3]=0x100;k.dispatch_private(11,&mut regs,&mut m).unwrap();
+    regs[3]=0x100;let result=k.dispatch_private(13,&mut regs,&mut m).unwrap();
+    assert!(result.contains("TIMEOUT"));assert_eq!(regs[3],0x102);
+    regs[3]=0x100;k.dispatch_private(12,&mut regs,&mut m).unwrap();
+    regs[3]=0x100;k.dispatch_private(13,&mut regs,&mut m).unwrap();assert_eq!(regs[3],0);
+    k.dispatch_private(18,&mut regs,&mut m).unwrap();k.dispatch_private(15,&mut regs,&mut m).unwrap();
+ }
  #[test]fn virtual_memory(){let mut k=Kernel::new();let mut m=Memory::with_base(vec![0;1024*1024],0x82000000);let mut g=[0u64;32];g[3]=0x82000100;g[4]=0x82000104;m.write_u32_be(g[4] as usize,4096).unwrap();k.dispatch_private(1,&mut g,&mut m).unwrap();assert_eq!(g[3],0);assert!(m.read_u32_be(0x82000100).unwrap()>=0x82010000);}
 }
