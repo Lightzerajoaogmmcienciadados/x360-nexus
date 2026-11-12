@@ -2,257 +2,267 @@ package com.x360nexus
 
 import android.app.Activity
 import android.content.Intent
-import android.database.Cursor
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
-import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.provider.OpenableColumns
+import android.view.View
+import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.LinearLayout
-import android.widget.ScrollView
+import android.widget.Spinner
 import android.widget.TextView
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import org.json.JSONArray
+import org.json.JSONObject
 
-/** X360 Nexus v4.4: XDVDFS, optional user-supplied key, LZX, and bounded PPC trace.
- * No key is included or persisted; this is not a full Xbox 360 emulator.
- */
+/** v4.5 UI and diagnostic execution; no actual commercial Xbox 360 game support. */
 class MainActivity : Activity() {
     companion object {
-        private const val PICK_ISO = 100
-        private const val SAVE_XEX = 101
-        private const val PICK_KEY = 102
-        private val GREEN = Color.rgb(30, 210, 95)
-        private val RUST_READY: Boolean
-        private val XDVDFS_READY: Boolean
+        private const val PICK_ISO=100
+        private const val PICK_KEY=102
+        private val GREEN=Color.rgb(46,204,113)
+        private val RUST_READY:Boolean
+        private val NATIVE_READY:Boolean
         init {
-            var rust = false
-            var xdvdfs = false
-            try { System.loadLibrary("x360nexus"); rust = true } catch (_: UnsatisfiedLinkError) { }
-            try { System.loadLibrary("x360xdvdfs"); xdvdfs = true } catch (_: UnsatisfiedLinkError) { }
-            RUST_READY = rust
-            XDVDFS_READY = xdvdfs
+            var r=false;var c=false
+            try {System.loadLibrary("x360nexus");r=true} catch (_:UnsatisfiedLinkError){}
+            try {System.loadLibrary("x360xdvdfs");c=true} catch (_:UnsatisfiedLinkError){}
+            RUST_READY=r;NATIVE_READY=c
         }
     }
+    private external fun nativeInspectXdvdfs(fd:Int):String
+    private external fun nativeLoadDefaultXex(fd:Int):String
+    private external fun nativeInspectStagedXex():String
+    private external fun nativePrepareStagedXex():String
+    private external fun nativePreparedInfo():LongArray?
+    private external fun nativeExecutableRanges():LongArray?
+    private external fun nativePreparedSnapshot():ByteArray?
+    private external fun nativeSetXexKey(bytes:ByteArray):String
+    private external fun nativeClearXexKey():String
+    private external fun nativeStartSession(image:ByteArray,base:Long,entry:Long,ranges:LongArray):String
+    private external fun nativeRunSessionChunk(steps:Int):String
+    private external fun nativeStopSession():String
+    private external fun nativeSetGpuCapabilities(renderer:String,gles:String,vulkan:String):String
+    private external fun nativeSetGraphicsSettings(backend:Int,resolution:Int,turnip:Boolean,
+        exact:Boolean,cache:Boolean,vsync:Boolean,fps:Boolean):String
 
-    private external fun nativeSelfTest(): String
-    private external fun nativeInspectXdvdfs(fd: Int): String
-    private external fun nativeLoadDefaultXex(fd: Int): String
-    private external fun nativeSaveDefaultXex(inputFd: Int, outputFd: Int): String
-    private external fun nativeGuestRamStatus(): String
-    private external fun nativeInspectStagedXex(): String
-    private external fun nativePrepareStagedXex(): String
-    private external fun nativePreparedEntryPoint(): Long
-    private external fun nativeFetchCodeWindow(address: Long, length: Int): ByteArray?
-    private external fun nativeTracePpc(bytes: ByteArray, guestPc: Long, steps: Int): String
-    private external fun nativeSetXexKey(key: ByteArray): String
-    private external fun nativeClearXexKey(): String
+    private data class Game(val uri:Uri,val name:String)
+    private val games=mutableListOf<Game>()
+    private var selected:Uri?=null
+    private val worker=Executors.newSingleThreadExecutor()
+    private val continueRunning=AtomicBoolean(false)
+    private val prefs by lazy {getSharedPreferences("x360-v45",MODE_PRIVATE)}
+    private lateinit var console:TextView
+    private lateinit var telemetry:TextView
+    private lateinit var gpuText:TextView
+    private lateinit var gameList:LinearLayout
+    private lateinit var settingsPanel:LinearLayout
+    private lateinit var backend:Spinner
+    private lateinit var resolution:Spinner
+    private lateinit var precision:Spinner
+    private lateinit var cache:CheckBox
+    private lateinit var vsync:CheckBox
+    private lateinit var showFps:CheckBox
+    private var busy=false
+    private var logBuffer=""
+    private var currentGpu="GPU ainda não detectada"
 
-    private val worker = Executors.newSingleThreadExecutor()
-    private val buttons = mutableListOf<Button>()
-    private lateinit var result: TextView
-    private var selectedIso: Uri? = null
-    private var busy = false
-
-    private fun text(value: String, sp: Float, color: Int): TextView = TextView(this).apply {
-        text = value
-        textSize = sp
-        setTextColor(color)
-        setPadding(8, 12, 8, 12)
-        setTextIsSelectable(true)
+    private fun log(message:String) {
+        val stamped="[${SystemClock.uptimeMillis()/1000}s] $message\n"
+        logBuffer=(logBuffer+stamped).takeLast(13000)
+        console.text=logBuffer
     }
-    private fun button(title: String, root: LinearLayout, action: () -> Unit) {
-        val b = Button(this).apply { text = title; isAllCaps = false; setOnClickListener { action() } }
-        buttons.add(b)
-        root.addView(b)
+    private fun uiLog(message:String) {runOnUiThread{log(message)}}
+    private fun setBusy(on:Boolean){busy=on
+        findViewById<Button>(R.id.startGame).isEnabled=!on
+        findViewById<Button>(R.id.selectIso).isEnabled=!on
     }
-    private fun show(message: String) { result.text = message }
-    private fun busy(value: Boolean) {
-        busy = value
-        buttons.forEach { it.isEnabled = !value }
+    private fun picker() {
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE);type="*/*"
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        },PICK_ISO)
     }
-    private fun withIso(title: String, action: (Int) -> String) {
-        if (busy) return
-        if (!XDVDFS_READY) { show("Biblioteca C++/JNI nao carregada"); return }
-        val uri = selectedIso ?: run { show("Selecione uma ISO antes."); return }
-        busy(true)
-        show("$title\nLendo ISO selecionada...")
-        worker.execute {
-            val response = try {
-                contentResolver.openFileDescriptor(uri, "r")?.use { action(it.fd) }
-                    ?: "Nao foi possivel abrir a ISO"
-            } catch (error: Throwable) {
-                "Falha: ${error.message}"
+    private fun select(uri:Uri){selected=uri;renderGames()}
+    private fun readStoredGames(){
+        try {
+            val arr=JSONArray(prefs.getString("games","[]"))
+            for(i in 0 until arr.length().coerceAtMost(12)){
+                val o=arr.getJSONObject(i);games.add(Game(Uri.parse(o.getString("uri")),o.getString("name")))
             }
-            runOnUiThread { busy(false); show(response) }
+            selected=games.firstOrNull()?.uri
+        }catch (_:Exception){}
+    }
+    private fun persistGames(){
+        val arr=JSONArray()
+        games.forEach { arr.put(JSONObject().put("uri",it.uri.toString()).put("name",it.name)) }
+        prefs.edit().putString("games",arr.toString()).apply()
+    }
+    private fun renderGames(){
+        gameList.removeAllViews()
+        if(games.isEmpty()){
+            gameList.addView(TextView(this).apply{text="Nenhuma ISO adicionada";setTextColor(Color.LTGRAY)})
+            return
+        }
+        for(game in games){
+            val active=game.uri==selected
+            gameList.addView(TextView(this).apply{
+                text=(if(active)"●  " else "○  ")+game.name+"\nISO selecionável • Inspeção XDVDFS"
+                textSize=15f;setTextColor(if(active) GREEN else Color.WHITE)
+                setPadding(10,12,10,12);setOnClickListener{select(game.uri);log("Selecionado: ${game.name}")}
+            })
         }
     }
-
-    override fun onCreate(savedInstanceState: Bundle?) {
+    private fun applySpinner(spinner:Spinner,options:List<String>,saved:Int){
+        spinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,options)
+        spinner.setSelection(saved.coerceIn(0,options.size-1))
+    }
+    private fun restoreSettings(){
+        applySpinner(backend,listOf("Auto (recomendado)","Vulkan (solicitado)","OpenGL ES (solicitado)"),prefs.getInt("backend",0))
+        applySpinner(resolution,listOf("0.5x / 360p","1x / 720p","1.5x / 1080p","2x / 1440p"),prefs.getInt("resolution",1))
+        applySpinner(precision,listOf("Rápida","Exata (preferência Mali)"),prefs.getInt("precision",0))
+        cache.isChecked=prefs.getBoolean("cache",true)
+        vsync.isChecked=prefs.getBoolean("vsync",true)
+        showFps.isChecked=prefs.getBoolean("fps",true)
+    }
+    private fun saveSettings(){
+        val be=backend.selectedItemPosition;val scale=resolution.selectedItemPosition
+        val exact=precision.selectedItemPosition==1
+        prefs.edit().putInt("backend",be).putInt("resolution",scale)
+            .putInt("precision",precision.selectedItemPosition)
+            .putBoolean("cache",cache.isChecked).putBoolean("vsync",vsync.isChecked)
+            .putBoolean("fps",showFps.isChecked).apply()
+        val note=if(NATIVE_READY) nativeSetGraphicsSettings(be,scale,false,exact,cache.isChecked,vsync.isChecked,showFps.isChecked)
+            else "Biblioteca C++ indisponível"
+        findViewById<TextView>(R.id.settingsNotice).text=note
+        log(note)
+    }
+    override fun onCreate(savedInstanceState:Bundle?){
         super.onCreate(savedInstanceState)
-        val scroll = ScrollView(this)
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(24, 36, 24, 36)
-            setBackgroundColor(Color.rgb(7, 15, 20))
-        }
-        root.addView(text("PROJECT XENON", 32f, GREEN))
-        root.addView(text("4.4: GALAXY | X360 Nexus Android\nXDVDFS + XEX2 + PowerPC Trace", 17f, Color.WHITE))
-        root.addView(text("PE32 • AES externo • LZX • CPU diagnostica", 17f, GREEN))
-
-        button("1. SELECIONAR ISO", root) {
-            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                addCategory(Intent.CATEGORY_OPENABLE)
-                type = "*/*"
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-            }, PICK_ISO)
-        }
-        button("2. ANALISAR ISO E LISTAR ARQUIVOS", root) {
-            withIso("Analisando XDVDFS...") { nativeInspectXdvdfs(it) }
-        }
-        button("3. CARREGAR default.xex NA RAM EMULADA", root) {
-            withIso("Copiando XEX bruto para staging...") { nativeLoadDefaultXex(it) }
-        }
-        button("4. EXTRAIR default.xex PARA ARQUIVO", root) {
-            if (busy || selectedIso == null) { show("Selecione uma ISO antes."); return@button }
-            startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                addCategory(Intent.CATEGORY_OPENABLE)
-                type = "application/octet-stream"
-                putExtra(Intent.EXTRA_TITLE, "default.xex")
-            }, SAVE_XEX)
-        }
-        button("CARREGAR CHAVE XEX (keys.bin)", root) {
-            if (busy) return@button
-            // SAF: no storage permission, no persistence of the selected key URI.
-            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                addCategory(Intent.CATEGORY_OPENABLE)
-                type = "application/octet-stream"
+        setContentView(R.layout.activity_main)
+        console=findViewById(R.id.console)
+        telemetry=findViewById(R.id.telemetry)
+        gpuText=findViewById(R.id.gpuInfo)
+        gameList=findViewById(R.id.gameList)
+        settingsPanel=findViewById(R.id.settingsPanel)
+        backend=findViewById(R.id.backend)
+        resolution=findViewById(R.id.resolution)
+        precision=findViewById(R.id.precision)
+        cache=findViewById(R.id.shaderCache)
+        vsync=findViewById(R.id.vsync)
+        showFps=findViewById(R.id.fpsToggle)
+        restoreSettings();readStoredGames();renderGames()
+        findViewById<Button>(R.id.selectIso).setOnClickListener {if(!busy)picker()}
+        findViewById<Button>(R.id.loadKey).setOnClickListener {
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{
+                addCategory(Intent.CATEGORY_OPENABLE);type="application/octet-stream"
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }, PICK_KEY)
+            },PICK_KEY)
         }
-        button("DESCARTAR CHAVE XEX", root) {
-            if (!busy && XDVDFS_READY) show(nativeClearXexKey())
+        findViewById<Button>(R.id.startGame).setOnClickListener {startSelected()}
+        findViewById<Button>(R.id.stopGame).setOnClickListener {
+            continueRunning.set(false)
+            if(RUST_READY)worker.execute {uiLog(nativeStopSession())}
         }
-        button("ANALISAR CABECALHOS XEX2", root) {
-            if (!XDVDFS_READY) { show("Nucleo C++ indisponivel"); return@button }
-            try { show(nativeInspectStagedXex()) } catch (e: Throwable) { show("Erro XEX: ${e.message}") }
+        findViewById<Button>(R.id.configButton).setOnClickListener {
+            settingsPanel.visibility=if(settingsPanel.visibility==View.VISIBLE)View.GONE else View.VISIBLE
         }
-        button("5. EXECUTAR XEX NA CPU (TRACE LIMITADO)", root) {
-            if (busy) return@button
-            if (!XDVDFS_READY || !RUST_READY) { show("JNI C++ ou Rust indisponivel"); return@button }
-            busy(true)
-            show("Preparando imagem PE32 e CPU...")
-            worker.execute {
-                val message = try {
-                    val status = nativePrepareStagedXex()
-                    val entry = nativePreparedEntryPoint()
-                    if (entry == 0L) {
-                        "$status\n\nTRACE indisponivel: PE nao validado/mapeado; verifique o diagnostico acima."
-                    } else {
-                        // No more than 256 bytes are copied to the bounded Rust interpreter.
-                        val code = listOf(256, 128, 64, 32, 16, 8, 4)
-                            .firstNotNullOfOrNull { nativeFetchCodeWindow(entry, it) }
-                        if (code == null) "$status\nEntry Point nao acessivel em secao executavel."
-                        else "$status\n\n" + nativeTracePpc(code, entry, 32)
-                    }
-                } catch (error: Throwable) {
-                    "Falha ao preparar/interpretar XEX: ${error.message}"
-                }
-                runOnUiThread { busy(false); show(message) }
-            }
+        findViewById<Button>(R.id.saveSettings).setOnClickListener {saveSettings()}
+        findViewById<Button>(R.id.consoleToggle).setOnClickListener {
+            console.visibility=if(console.visibility==View.VISIBLE)View.GONE else View.VISIBLE
         }
-        button("CONSULTAR MEMORIA RAM EMULADA", root) {
-            if (XDVDFS_READY) show(nativeGuestRamStatus()) else show("Biblioteca C++ indisponivel")
+        log("v4.5: Rust JNI=${RUST_READY}, C++ JNI=${NATIVE_READY}. Execução limitada a snapshot de PE32.")
+        worker.execute {
+            val info=GpuDetector.query(this)
+            currentGpu="${info.family}\n${info.renderer}\nOpenGL ES: ${info.version}\nVulkan: ${info.vulkan}"
+            val msg=if(NATIVE_READY) nativeSetGpuCapabilities(info.renderer,info.version,info.vulkan) else "JNI C++ indisponível"
+            runOnUiThread {gpuText.text=currentGpu;log(msg);saveSettings()}
         }
-        button("TESTAR CPU POWERPC + KERNEL (RUST)", root) {
-            if (RUST_READY) show(nativeSelfTest()) else show("Nucleo Rust indisponivel")
-        }
-
-        result = text("X360 Nexus v4.4\n\nRust JNI: " + (if (RUST_READY) "OK" else "Indisponivel") +
-            "\nC++ JNI: " + (if (XDVDFS_READY) "OK" else "Indisponivel") +
-            "\n\nPara testar: selecione ISO -> carregue default.xex -> analise XEX -> trace.\n" +
-            "Chave externa em memoria e descompressor LZX experimental disponiveis.\n" +
-            "Stubs xboxkrnl/xam ainda nao sao servicos reais.", 16f, Color.LTGRAY)
-        root.addView(result)
-        scroll.addView(root)
-        setContentView(scroll)
     }
-
-    @Deprecated("Uses Android Storage Access Framework legacy activity result")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode != RESULT_OK) return
-        val uri = data?.data ?: return
-        if (requestCode == PICK_ISO) {
-            selectedIso = uri
-            try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-            catch (_: SecurityException) { }
-            var name = uri.lastPathSegment ?: "ISO"
-            var size = -1L
+    private fun startSelected(){
+        if(busy || !NATIVE_READY || !RUST_READY){log("Bibliotecas indisponíveis ou execução já iniciada.");return}
+        val iso=selected?:run{log("Adicione e selecione uma ISO primeiro.");return}
+        setBusy(true);continueRunning.set(true)
+        worker.execute {
             try {
-                contentResolver.query(uri, null, null, null, null)?.use { c: Cursor ->
-                    if (c.moveToFirst()) {
-                        val n = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                        if (n >= 0) name = c.getString(n)
-                        val s = c.getColumnIndex(OpenableColumns.SIZE)
-                        if (s >= 0 && !c.isNull(s)) size = c.getLong(s)
-                    }
-                }
-            } catch (_: Exception) { }
-            show("ISO selecionada: $name\nTamanho: $size bytes\n\nToque em 2 para analisar XDVDFS.")
-        } else if (requestCode == PICK_KEY) {
-            if (busy || !XDVDFS_READY) return
-            busy(true)
-            show("Lendo chave externa de 16 bytes, sem salvar...")
-            worker.execute {
-                var buffer = ByteArray(17)
-                val message = try {
-                    val source = contentResolver.openInputStream(uri)
-                        ?: throw IllegalArgumentException("Nao foi possivel abrir keys.bin")
-                    val count = source.use { input ->
-                        var n = 0
-                        while (n < buffer.size) {
-                            val got = input.read(buffer, n, buffer.size - n)
-                            if (got < 0) break
-                            if (got == 0) continue
-                            n += got
+                contentResolver.openFileDescriptor(iso,"r")?.use { fd ->
+                    uiLog(nativeLoadDefaultXex(fd.fd))
+                }?:throw IllegalStateException("Não foi possível abrir a ISO")
+                if(!continueRunning.get())return@execute
+                uiLog(nativeInspectStagedXex())
+                val preparation=nativePrepareStagedXex()
+                uiLog(preparation)
+                val info=nativePreparedInfo()?:throw IllegalStateException("PE não preparado: verifique AES/LZX e imports")
+                val ranges=nativeExecutableRanges()?:throw IllegalStateException("Secoes executaveis inválidas")
+                val snapshot=nativePreparedSnapshot()?:throw IllegalStateException("Imagem maior que 16 MiB ou RAM indisponível para o teste")
+                val start=try{nativeStartSession(snapshot,info[0],info[1],ranges)}finally{snapshot.fill(0)}
+                uiLog(start)
+                if(!start.startsWith("OK|"))return@execute
+                var lastHud=0L
+                var lastReport=""
+                while(continueRunning.get()){
+                    lastReport=nativeRunSessionChunk(8000)
+                    val now=SystemClock.uptimeMillis()
+                    if(now-lastHud>=350 || !lastReport.startsWith("RUNNING|")){
+                        val payload=lastReport
+                        runOnUiThread {
+                            val ips=Regex("IPS=([0-9]+)").find(payload)?.groupValues?.get(1)?:"0"
+                            telemetry.text="RAM snapshot: ${info[2]/1024/1024} MiB | IPS: $ips | FPS: N/D (sem Xenos)"
+                            log(payload)
                         }
-                        n
+                        lastHud=now
                     }
-                    if (count != 16) {
-                        "Chave rejeitada: o arquivo deve ter exatamente 16 bytes (binarios)."
-                    } else {
-                        val key = buffer.copyOfRange(0, 16)
-                        try { nativeSetXexKey(key) }
-                        finally { key.fill(0) }
-                    }
-                } catch (e: Throwable) {
-                    "Erro lendo chave externa: ${e.message}"
-                } finally {
-                    buffer.fill(0)
+                    if(!lastReport.startsWith("RUNNING|"))break
                 }
-                runOnUiThread { busy(false); show(message) }
-            }
-        } else if (requestCode == SAVE_XEX) {
-            val source = selectedIso ?: run { show("Selecione uma ISO"); return }
-            if (!XDVDFS_READY || busy) return
-            busy(true)
-            show("Extraindo default.xex...")
-            worker.execute {
-                val message = try {
-                    contentResolver.openFileDescriptor(source, "r")?.use { src: ParcelFileDescriptor ->
-                        contentResolver.openFileDescriptor(uri, "w")?.use { dst: ParcelFileDescriptor ->
-                            nativeSaveDefaultXex(src.fd, dst.fd)
-                        }
-                    } ?: "Nao foi possivel abrir os arquivos"
-                } catch (e: Throwable) { "Erro de extracao: ${e.message}" }
-                runOnUiThread { busy(false); show(message) }
+                if(!continueRunning.get())uiLog(nativeStopSession())
+            }catch(e:Throwable){uiLog("PARADA: ${e.message}")}
+            finally{continueRunning.set(false);runOnUiThread{setBusy(false)}}
+        }
+    }
+    @Deprecated("Legacy Storage Access Framework callback")
+    override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){
+        super.onActivityResult(requestCode,resultCode,data)
+        if(resultCode!=RESULT_OK)return
+        val uri=data?.data?:return
+        if(requestCode==PICK_ISO){
+            try {contentResolver.takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION)}catch(_:SecurityException){}
+            var name=uri.lastPathSegment?:"ISO"
+            try {contentResolver.query(uri,null,null,null,null)?.use{cur->
+                if(cur.moveToFirst()){
+                    val index=cur.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if(index>=0)name=cur.getString(index)
+                }
+            }}catch(_:Exception){}
+            games.removeAll{it.uri==uri};games.add(0,Game(uri,name))
+            while(games.size>12)games.removeAt(games.lastIndex)
+            selected=uri;persistGames();renderGames();log("ISO adicionada: $name")
+        } else if(requestCode==PICK_KEY){
+            if(busy)return
+            worker.execute{
+                val buf=ByteArray(17)
+                val message=try{
+                    val amount=contentResolver.openInputStream(uri)?.use{input->
+                        var offset=0
+                        while(offset<17){val n=input.read(buf,offset,17-offset);if(n<0)break;if(n>0)offset+=n}
+                        offset
+                    }?:0
+                    if(amount!=16) "keys.bin deve ter 16 bytes; leitura rejeitada" else {
+                        val key=buf.copyOfRange(0,16)
+                        try{nativeSetXexKey(key)}finally{key.fill(0)}
+                    }
+                }catch(e:Throwable){"Falha lendo chave: ${e.message}"}finally{buf.fill(0)}
+                uiLog(message)
             }
         }
     }
-    override fun onDestroy() {
-        if (XDVDFS_READY) nativeClearXexKey()
-        worker.shutdown()
+    override fun onDestroy(){
+        continueRunning.set(false)
+        worker.shutdownNow()
+        if(NATIVE_READY)nativeClearXexKey()
         super.onDestroy()
     }
 }

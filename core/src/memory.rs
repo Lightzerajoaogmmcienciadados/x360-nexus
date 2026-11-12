@@ -1,2 +1,33 @@
-#[derive(Debug)]pub struct Memory { data: Vec<u8> }
-impl Memory {pub fn new(bytes:usize)->Self{Self{data:vec![0;bytes]}}pub fn len(&self)->usize{self.data.len()}pub fn read_u32_be(&self,addr:usize)->Result<u32,&'static str>{let b=self.data.get(addr..addr.checked_add(4).ok_or("address overflow")?).ok_or("memory out of range")?;Ok(u32::from_be_bytes(b.try_into().unwrap()))}pub fn write(&mut self,addr:usize,src:&[u8])->Result<(),&'static str>{let dst=self.data.get_mut(addr..addr.checked_add(src.len()).ok_or("address overflow")?).ok_or("memory out of range")?;dst.copy_from_slice(src);Ok(())}pub fn read(&self,addr:usize,len:usize)->Result<&[u8],&'static str>{self.data.get(addr..addr.checked_add(len).ok_or("address overflow")?).ok_or("memory out of range")}}
+//! Big-endian guest-addressed memory with explicit bounds checks.
+//! The compact 32 MiB snapshot limit is a v4.5 diagnostic guard,
+//! not the Xenon's complete 512 MiB MMU.
+#[derive(Debug)]
+pub struct Memory { data: Vec<u8>, base: u64 }
+impl Memory {
+    pub fn new(bytes: usize) -> Self { Self { data: vec![0; bytes], base: 0 } }
+    pub fn with_base(bytes: Vec<u8>, base: u64) -> Self { Self { data: bytes, base } }
+    pub fn len(&self)->usize {self.data.len()}
+    pub fn base(&self)->u64 {self.base}
+    fn offset(&self, addr: usize, len:usize)->Result<usize,&'static str>{
+        let at=(addr as u64).checked_sub(self.base).ok_or("address below guest base")?;
+        let off=usize::try_from(at).map_err(|_|"guest address overflow")?;
+        let end=off.checked_add(len).ok_or("address overflow")?;
+        if end>self.data.len(){return Err("memory out of range");}
+        Ok(off)
+    }
+    pub fn read(&self,addr:usize,len:usize)->Result<&[u8],&'static str>{
+        let p=self.offset(addr,len)?;Ok(&self.data[p..p+len])
+    }
+    pub fn write(&mut self,addr:usize,src:&[u8])->Result<(),&'static str>{
+        let p=self.offset(addr,src.len())?;self.data[p..p+src.len()].copy_from_slice(src);Ok(())
+    }
+    pub fn read_u8(&self,a:usize)->Result<u8,&'static str>{Ok(self.read(a,1)?[0])}
+    pub fn read_u16_be(&self,a:usize)->Result<u16,&'static str>{Ok(u16::from_be_bytes(self.read(a,2)?.try_into().unwrap()))}
+    pub fn read_u32_be(&self,a:usize)->Result<u32,&'static str>{Ok(u32::from_be_bytes(self.read(a,4)?.try_into().unwrap()))}
+    pub fn read_u64_be(&self,a:usize)->Result<u64,&'static str>{Ok(u64::from_be_bytes(self.read(a,8)?.try_into().unwrap()))}
+    pub fn write_u8(&mut self,a:usize,v:u8)->Result<(),&'static str>{self.write(a,&[v])}
+    pub fn write_u16_be(&mut self,a:usize,v:u16)->Result<(),&'static str>{self.write(a,&v.to_be_bytes())}
+    pub fn write_u32_be(&mut self,a:usize,v:u32)->Result<(),&'static str>{self.write(a,&v.to_be_bytes())}
+    pub fn write_u64_be(&mut self,a:usize,v:u64)->Result<(),&'static str>{self.write(a,&v.to_be_bytes())}
+}
+#[cfg(test)] mod tests {use super::*;#[test]fn endian_and_bounds(){let mut m=Memory::with_base(vec![0;8],0x82000000);m.write_u32_be(0x82000000,0x12345678).unwrap();assert_eq!(m.read(0x82000000,4).unwrap(), &[0x12,0x34,0x56,0x78]);assert_eq!(m.read_u16_be(0x82000002).unwrap(),0x5678);assert!(m.read_u32_be(0x82000006).is_err());}}

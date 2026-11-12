@@ -1,49 +1,33 @@
-# Project Xenon 4.4 — AES-128 with externally supplied key + CAB LZX
+# X360 Nexus / Project Xenon v4.5 — experimental PPC runtime and GPU-aware Android shell
 
-This incremental source update builds on v4.3 without replacing the XDVDFS
-ISO reader or the Rust PowerPC diagnostic tracer.
+This is a developmental upgrade to v4.4. It **does not run commercial Xbox 360 games**. The Xbox kernel, Xenos command processor, shaders, PPC VMX128, full MMU and real title imports remain unimplemented. Do not interpret successful tests or the presence of Vulkan settings as game compatibility.
 
-## New C++ files / changes
-- `android/app/src/main/cpp/xex_lzx.cpp`: independently written CAB-LZX
-  decoder (uncompressed, Verbatim, Aligned blocks; Huffman lengths and LZ
-  back-references) and XEX Normal outer block/chunk framing with SHA-1 checks.
-- `xex_loader.hpp/.cpp`: XEX Security Info ImageKey extraction, AES key
-  unwrapping with a 16-byte *caller-supplied* external key, AES-CBC image
-  decryption, LZX Normal decompression, and existing PE32 section mapping.
-- `jni_bridge.cpp`: Android JNI methods to load/discard a key in process RAM;
-  the existing `nativePrepareStagedXex` uses it when encryption is present.
-- `MainActivity.kt`: new `CARREGAR CHAVE XEX (keys.bin)` and `DESCARTAR
-  CHAVE XEX` actions, and the existing bounded `5. EXECUTAR XEX NA CPU` action.
-- CMake, Gradle and GitHub Actions updated to compile the new C++ source.
+## Changes
 
-A key file must contain **exactly 16 raw bytes**. No console keys are included,
-stored on disk, shown in diagnostics, or fetched from third-party services.
-The app discards the key when the user presses the discard button or closes
-its Activity; native process memory may still contain copies unless securely
-cleared by the operating system.
+- Rust PPC64 subset: arithmetic (`addi`, `addis`, `ori`, `oris`, `add`, `or/mr`, `rlwinm`), comparisons (`cmpwi`, `cmplwi`), selected branch conditions (`b`, `bl`, `bc` with CR/CTR, `bclr`, `bcctr`), SPR LR/CTR moves, loads/stores (`lwz`, `lwzu`, `stw`, `stwu`, `lbz`, `stb`, `lhz`, `sth`). All accesses are checked and big-endian.
+- Private HLE **test ABI**, not real xboxkrnl/xam ordinals, implements bounded virtual allocation accounting, TLS, simulated thread record, critical section bookkeeping and synthetic video mode query. Unregistered imports remain errors. A secondary stub can return r3=0 only after explicit registration; it logs that no service was implemented.
+- A bounded Rust runtime on a separate Android worker: reads a PE snapshot of **at most 16 MiB** from the existing v4.4 mapped C++ guest RAM; starts at its actual XEX entry PC, checks section execute ranges, runs in 8,000-instruction chunks (total cap 2 million), measures genuine IPS and pauses on unknown opcode, `sc` without private ABI, out-of-range fetch or stop. Diagnostics show PC, next opcode, CR, LR, CTR and r3-r10.
+- Android dark `activity_main.xml` with selected ISO cards, HUD, start/stop controls, key selection via SAF, preferences, expandable trace.
+- EGL OpenGL ES renderer/version probe on a temporary pbuffer and Android Vulkan feature report. No graphics framebuffer for a real Xbox 360 title is presented. Turnip cannot be loaded automatically and is disabled, and other toggles configure preferences for future backends, not a working shader translator.
 
-## Limits and validation
-- The LZX decoder uses the classic CAB format, not LZX Delta. Unit tests
-  cover uncompressed blocks, Verbatim literals, Aligned literals, framing,
-  SHA-1 integrity, malformed data and an AES-128 test vector.
-- Intel E8-transformed LZX streams are explicitly rejected (PowerPC PE32
-  content should not use Intel x86 fixups). No known commercial game is used
-  in tests and real-world XEX compatibility is not guaranteed.
-- Memory limits: 128 MiB decompressed payload, 128 MiB XEX input, 512 MiB
-  sparse guest address space. Stream is decoded into host memory and mapped
-  into a new guest image, not executed in-place from raw staging.
-- Parsing and decryption do **not** imply that Xbox 360 games can run. Imports
-  `xboxkrnl` / `xam`, CPU ISA completeness, virtual memory, GPU and kernel
-  services remain missing. Rust trace still runs at most 32 supported PPC
-  instructions from an executable section and stops on unknown instructions.
+## Files edited/created (Rust, C++, Kotlin, XML, CMake/Gradle)
 
-## Build / test C++
+- `core/src/cpu.rs`, `core/src/memory.rs`, `core/src/kernel.rs`, `core/src/runtime.rs` (new), `core/src/lib.rs`
+- `android/app/src/main/cpp/jni_bridge.cpp`, `gpu_settings.cpp` (new), `CMakeLists.txt`
+- `android/app/src/main/java/com/x360nexus/MainActivity.kt`, `GpuDetector.kt` (new)
+- `android/app/src/main/res/layout/activity_main.xml` (new)
+- `android/app/src/main/res/drawable/nexus_card.xml`, `nexus_button.xml` (new)
+- `android/app/src/main/AndroidManifest.xml`, `android/app/build.gradle`
+- `.github/workflows/build-x360-android-apk.yml` updated for v4.5 diagnostics/artifact
 
-```
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build --parallel 2
-ctest --test-dir build --output-on-failure
-```
+The C++ reader, XEX AES/LZX and PE mapping from v4.4, and Rust trace from v4.3 are preserved. No console key is included or persisted.
 
-Android APK build uses `.github/workflows/build-x360-android-apk.yml` with
-Rust ARM64, C++20 JNI and Kotlin. No proprietary XEX data is distributed.
+## CI
+
+- `cargo test --manifest-path core/Cargo.toml`
+- `cmake -S . -B build/xdvdfs-host && cmake --build build/xdvdfs-host && ctest --test-dir build/xdvdfs-host --output-on-failure`
+- Android ARM64 Gradle APK by `.github/workflows/build-x360-android-apk.yml` (SDK 35, NDK 27, Java 17, Kotlin 2.0.21).
+
+## Important constraints
+
+The app displays **FPS: N/D** until actual graphics are being rendered. Only measured **IPS** reflects guest interpreter steps. Vulkan device capabilities are reported by Android; backend setting is a *request*, not evidence of active Vulkan/Xenos rendering. A 16 MiB PE window limit and 2-million-step execution cap protect the device. The process does not have an Xbox kernel or genuine import resolver. For educational tests, the `sc` private ABI uses r0 = `0x58450000 + service_id` (1..10); this is *not* the real Xbox ABI.

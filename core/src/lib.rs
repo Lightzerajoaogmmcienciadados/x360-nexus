@@ -8,6 +8,7 @@ pub mod loader;
 pub mod memory;
 pub mod galaxy;
 pub mod xex_trace;
+pub mod runtime;
 mod galaxy_jni;
 use audio::Audio;
 use cpu::Cpu;
@@ -38,7 +39,7 @@ impl Machine {
         Ok(())
     }
     pub fn step(&mut self) -> Result<(), String> {
-        self.cpu.step(&self.memory)?;
+        self.cpu.step_mut(&mut self.memory)?;
         self.kernel.tick();
         Ok(())
     }
