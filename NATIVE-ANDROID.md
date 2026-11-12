@@ -97,3 +97,10 @@ Use only game files that you are authorized to use.
 Commercial Xbox 360 game execution remains unsupported. It still lacks an Xbox 360
 XEX image loader, decryption, full Xenon PPC/VMX128/MMU, XAM/Xbox kernel APIs,
 Xenos register/packet/shader emulation, and XMA audio decoding.
+
+
+## v10.0 (experimental)
+- Native GPU stress test: 30 frames / 24 textured triangles per frame, depth test, software rasterization, timings and draw statistics.
+- Benchmark runs off the Android UI thread to avoid blocking input and rendering.
+- Keeps the Android haptic vibration fix, game cover library, ISO/XEX metadata, CPU subset, PCM and gamepad support.
+- NOT compatible with commercial Xbox 360 games: real Xenon JIT/MMU, Xbox kernel APIs, Xenos shader/packet translation and XMA are still missing.

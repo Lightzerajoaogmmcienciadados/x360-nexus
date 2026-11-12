@@ -76,6 +76,7 @@ public final class MainActivity extends Activity {
 
     private native String nativeSelfTest();
     private native String nativeSubsystemDiagnostics();
+    private native String nativeGpuBenchmark(int frames);
     private native String nativeInspectPackage(byte[] header);
     private native String nativeRunDemo();
     private native int[] nativeGpuLabFrame(int mode);
@@ -237,6 +238,25 @@ public final class MainActivity extends Activity {
     }
     private void core() {
         heading("Núcleo Rust / Xenon","Ferramentas executadas localmente no aparelho.");
+        LinearLayout benchmarkPanel=panel("GPU LAB v10.0 — BENCHMARK NATIVO",
+            "Teste 30 quadros com 24 triângulos texturizados por quadro, Z-buffer e estatísticas reais do rasterizador Rust. Não é GPU Xenos real.");
+        add(content,benchmarkPanel,12);
+        Button benchButton=button("Executar benchmark GPU (30 frames)");
+        add(benchmarkPanel,benchButton,10);
+        TextView benchOutput=text("Aguardando benchmark.",12,LIGHT,false);
+        add(benchmarkPanel,benchOutput,10);
+        benchButton.setOnClickListener(v->{
+            if(!RUST_AVAILABLE){benchOutput.setText("Núcleo Rust indisponível.");return;}
+            benchButton.setEnabled(false);
+            benchOutput.setText("Executando GPU experimental...");
+            new Thread(()->{
+                String report;
+                try{report=nativeGpuBenchmark(30);}
+                catch(Throwable err){report="Erro GPU: "+err.getMessage();}
+                final String output=report;
+                runOnUiThread(()->{benchOutput.setText(output);benchButton.setEnabled(true);});
+            }).start();
+        });
         LinearLayout subsystem=panel("COMPAT LAB 6.6 — DIAGNÓSTICO AMPLIADO",
             "Execute testes do interpretador PowerPC, escalonador experimental, mixer de áudio PCM e GPU 3D.");
         add(content,subsystem,13);
@@ -763,9 +783,9 @@ public final class MainActivity extends Activity {
         return super.onGenericMotionEvent(event);
     }
     private void about() {
-        heading("Sobre o X360 Nexus","Build Android 6.6 • Experimental nativo");
+        heading("Sobre o X360 Nexus","Build Android 10.0 • Experimental nativo");
         status("ARQUITETURA","Android SDK + OpenGL ES 2.0 + AudioTrack + Rust JNI aarch64.");
-        status("SUPORTE ATUAL","Leitura ISO/XEX2 e identificação CON/LIVE/PIRS, instruções PowerPC adicionais, escalonador de diagnóstico, mixer PCM estéreo e resampler, GPU LAB 3D, controles, capas e vibração Android.");
+        status("SUPORTE ATUAL","GPU LAB v10.0 com benchmark nativo assíncrono e estatísticas, leitura ISO/XEX2/CON/LIVE/PIRS, CPU PowerPC parcial, mixer PCM, controles, capas e vibração Android.");
         status("LIMITAÇÕES IMPORTANTES","Sem JIT PPC, MMU Xbox completa, APIs XAM/Xbox Kernel, decodificador XMA, tradutor Xenos, renderização 360 e execução de jogos comerciais.");
         status("PRIVACIDADE","Arquivos escolhidos permanecem no aparelho. A biblioteca guarda URIs locais, nomes, tamanhos e resultados de inspeção.");
     }
