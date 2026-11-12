@@ -1,11 +1,11 @@
-name: X360 Nexus v4.2 Android JNI C++ + Rust APK
+name: X360 Nexus v4.3 Android C++/Rust/Kotlin APK
 
 on:
   workflow_dispatch:
   push:
     branches:
       - main
-      - feature/project-xenon-v4.2-xdvdfs-android
+      - feature/project-xenon-v4.3-xdvdfs-android
     paths:
       - '.github/workflows/build-x360-android-apk.yml'
       - 'android/**'
@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   android-apk:
-    name: Compile v4.2 ARM64 APK
+    name: Compile v4.3 ARM64 APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -51,7 +51,7 @@ jobs:
         with:
           targets: aarch64-linux-android
 
-      - name: Native C++ XDVDFS tests (host)
+      - name: Native C++ XDVDFS + XEX2 tests (host)
         shell: bash
         run: |
           set -euo pipefail
@@ -70,7 +70,7 @@ jobs:
           cargo build --manifest-path core/Cargo.toml --release --target aarch64-linux-android
           install -Dm755 core/target/aarch64-linux-android/release/libx360nexus.so android/app/src/main/jniLibs/arm64-v8a/libx360nexus.so
 
-      - name: Gradle APK with C++ XDVDFS JNI
+      - name: Gradle APK with C++ XEX2 JNI and Kotlin UI
         shell: bash
         working-directory: android
         run: |
@@ -92,7 +92,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: X360-Nexus-v4.2-Android-ARM64-Debug-APK
+          name: X360-Nexus-v4.3-Android-ARM64-Debug-APK
           path: |
             android/app/build/outputs/apk/debug/app-debug.apk
             apk-sha256.txt
@@ -103,7 +103,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: X360-Nexus-v4.2-Android-Build-Log
+          name: X360-Nexus-v4.3-Android-Build-Log
           path: gradle-build.log
           if-no-files-found: ignore
           retention-days: 7
