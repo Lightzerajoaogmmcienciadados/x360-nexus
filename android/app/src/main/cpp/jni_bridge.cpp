@@ -277,3 +277,17 @@ Java_com_x360nexus_MainActivity_nativePreparedSnapshot(JNIEnv* env,jobject){
         return out;
     }catch(...){return nullptr;}
 }
+
+// Read-only bridge for the PM4 diagnostic decoder. Do not hold this mutex
+// while calling GPU or EGL methods, avoiding the video-lock hierarchy.
+extern "C" bool x360_try_read_guest_ram(uint32_t address, void* dst, size_t len) {
+    try {
+        std::lock_guard<std::mutex> lock(g_memory_mutex);
+        if (!g_ram || !g_prepared || len > 16384) return false;
+        // Limit reads to a mapped image, never unvalidated arbitrary offsets.
+        const uint64_t at=address, lo=g_prepared->base;
+        if (at<lo || at+len>lo+g_prepared->image_size) return false;
+        g_ram->read(address,dst,len);
+        return true;
+    } catch (...) {return false;}
+}
