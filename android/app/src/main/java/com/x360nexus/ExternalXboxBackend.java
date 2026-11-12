@@ -8,11 +8,14 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
+import android.provider.Settings;
 import android.widget.Toast;
 
 /**
- * Explicit opt-in bridge to a separately installed XenDroid-family emulator,
- * built from a real Xenia/ARM64 backend. THIS APK DOES NOT contain Xenia.
+ * Calls the in-package XenDroid Mali / Xenia ARM64 host when integrated, or
+ * an externally installed compatible backend when using a launcher-only APK.
+ * The Xenia runtime and Vulkan graphics translator belong to XenDroid upstream.
  *
  * Verified source contract (XenDroid Mali, main/q664, Nov 2026):
  * - package applicationId: xendroid.compose
@@ -60,7 +63,44 @@ public final class ExternalXboxBackend {
             +(isIntegrated(ctx)
                 ?"\nMotor Xenia integrado no APK (processo :emu)."
                 :"\nMotor Xenia instalado externamente ao X360 Nexus.")
+            +(isIntegrated(ctx)?("\nAcesso a todos os arquivos: "
+                +(hasRequiredStorageAccess(ctx)?"AUTORIZADO":"NAO AUTORIZADO")):"")
             +"\nNao garante inicializacao nem desempenho de jogos.";
+    }
+
+    /** The integrated XenDroid q664 runtime checks this before native boot. */
+    public static boolean hasRequiredStorageAccess(Context context){
+        if(!isIntegrated(context))return true;
+        return Build.VERSION.SDK_INT>=30 && Environment.isExternalStorageManager();
+    }
+    /** Open Android's user-controlled special access screen; never auto-grant. */
+    public static void requestStorageAccess(Activity activity){
+        if(!isIntegrated(activity))return;
+        if(Build.VERSION.SDK_INT<30){
+            Toast.makeText(activity,"O Xenia integrado necessita Android 11 ou superior",
+                Toast.LENGTH_LONG).show();
+            return;
+        }
+        if(hasRequiredStorageAccess(activity)){
+            Toast.makeText(activity,"Acesso aos arquivos ja autorizado",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try{
+            Intent settings=new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+            settings.setData(Uri.fromParts("package",activity.getPackageName(),null));
+            activity.startActivity(settings);
+        }catch(ActivityNotFoundException unavailable){
+            try{
+                activity.startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+            }catch(ActivityNotFoundException e){
+                Toast.makeText(activity,
+                    "Configuracoes > Aplicativos > Acesso especial > Acesso a todos os arquivos",
+                    Toast.LENGTH_LONG).show();
+            }
+        }catch(SecurityException denied){
+            Toast.makeText(activity,"Nao foi possivel abrir ajustes: "+denied.getMessage(),
+                Toast.LENGTH_LONG).show();
+        }
     }
 
     public static boolean supportsFile(String filename){
@@ -75,7 +115,7 @@ public final class ExternalXboxBackend {
     /**
      * Forwards a user-selected game's SAF content URI. The actual Xbox 360
      * JIT, HLE, Vulkan command processing and game execution are entirely
-     * performed by XenDroid's separate app/process, if installed.
+     * performed by XenDroid's own :emu process WITHIN this APK when integrated.
      */
     public static String play(Activity activity,Uri gameUri) {
         return play(activity,gameUri,null,null);
@@ -87,6 +127,18 @@ public final class ExternalXboxBackend {
             return "Caminho do jogo invalido";
         if(!isInstalled(activity))
             return "Instale o XenDroid Mali separadamente antes de jogar";
+        if(isIntegrated(activity) && !hasRequiredStorageAccess(activity)){
+            new android.app.AlertDialog.Builder(activity)
+                .setTitle("Permissao necessaria para iniciar o jogo")
+                .setMessage("O Xenia integrado precisa de Acesso a todos os arquivos. "
+                    +"A ISO pode aparecer na biblioteca, mas o motor Android verifica "
+                    +"essa permissao antes de iniciar. Abra os ajustes do celular, "
+                    +"conceda a permissao e toque em Iniciar jogo novamente.")
+                .setNegativeButton("Cancelar",null)
+                .setPositiveButton("Abrir configuracoes",(dialog,button)->
+                    requestStorageAccess(activity)).show();
+            return "Permissao de arquivos pendente no Android";
+        }
         try{
             Intent launch=new Intent(ACTION);
             launch.setClassName(PACKAGE,ACTIVITY);
@@ -101,8 +153,8 @@ public final class ExternalXboxBackend {
             launch.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             activity.startActivity(launch);
             return isIntegrated(activity)
-                ?"Jogo enviado ao motor Xenia integrado. Verifique carregamento e FPS."
-                :"Jogo enviado ao XenDroid externo. Compatibilidade depende do jogo.";
+                ?"Xenia integrado iniciado dentro do X360 Nexus. Aguarde o carregamento."
+                :"Jogo encaminhado ao emulador externo. Compatibilidade variavel.";
         }catch(ActivityNotFoundException e){
             return "XenDroid presente, mas a atividade de execucao nao foi encontrada";
         }catch(SecurityException e){

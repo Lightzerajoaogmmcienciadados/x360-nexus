@@ -82,18 +82,27 @@ public final class MaliPerformance {
         }
     }
 
-    private static LinkedHashMap<String,LinkedHashMap<String,String>> preset(){
+    private static LinkedHashMap<String,LinkedHashMap<String,String>> preset(String mode,int customScale){
+        if(!("performance".equals(mode)||"balanced".equals(mode)
+            ||"quality".equals(mode)||"custom".equals(mode)))
+            throw new IllegalArgumentException("Perfil desconhecido");
+        int scale="performance".equals(mode)?1:
+            ("balanced".equals(mode)?2:
+             ("quality".equals(mode)?2:Math.max(1,Math.min(3,customScale))));
+        boolean effects="quality".equals(mode);
+
         LinkedHashMap<String,LinkedHashMap<String,String>> all=new LinkedHashMap<>();
         LinkedHashMap<String,String> gpu=new LinkedHashMap<>();
         // Same 1x Mali performance baseline as XenDroid's source preset.
-        gpu.put("draw_resolution_scale_x","1");
-        gpu.put("draw_resolution_scale_y","1");
+        gpu.put("draw_resolution_scale_x",Integer.toString(scale));
+        gpu.put("draw_resolution_scale_y",Integer.toString(scale));
         gpu.put("native_2x_msaa","true");
         gpu.put("occlusion_query","\"fake\"");
         gpu.put("framerate_limit","0");
         gpu.put("vulkan_mid_frame_submission_draws","0");
         gpu.put("clear_memory_page_state","false");
         gpu.put("half_pixel_offset","true");
+        if(effects)gpu.put("anisotropic_override","5");
         all.put("GPU",gpu);
 
         LinkedHashMap<String,String> vulkan=new LinkedHashMap<>();
@@ -105,8 +114,8 @@ public final class MaliPerformance {
         all.put("Vulkan",vulkan);
 
         LinkedHashMap<String,String> display=new LinkedHashMap<>();
-        display.put("postprocess_antialiasing","\"none\"");
-        display.put("postprocess_scaling_and_sharpening","\"\"");
+        display.put("postprocess_antialiasing",effects?"\"fxaa\"":"\"none\"");
+        display.put("postprocess_scaling_and_sharpening",effects?"\"cas\"":"\"\"");
         all.put("Display",display);
         return all;
     }
@@ -126,7 +135,10 @@ public final class MaliPerformance {
 
     // Patch only known keys; preserve unrelated config, sections and comments.
     static String merge(String source){
-        LinkedHashMap<String,LinkedHashMap<String,String>> values=preset();
+        return merge(source,"performance",1);
+    }
+    static String merge(String source,String mode,int customScale){
+        LinkedHashMap<String,LinkedHashMap<String,String>> values=preset(mode,customScale);
         HashSet<String> seen=new HashSet<>();
         HashSet<String> existingSections=new HashSet<>();
         String current=null;
@@ -166,7 +178,13 @@ public final class MaliPerformance {
         String input="[GPU]\nuser_custom_key = 7\ndraw_resolution_scale_x = 3\n\n"
             +"[Audio]\nvolume = 0.5\n";
         String result=merge(input);
-        return result.contains("user_custom_key = 7")
+        String balanced=merge(input,"balanced",2);
+        String quality=merge(input,"quality",2);
+        String custom=merge(input,"custom",3);
+        return balanced.contains("draw_resolution_scale_x = 2")
+            && quality.contains("postprocess_antialiasing = \"fxaa\"")
+            && custom.contains("draw_resolution_scale_x = 3")
+            && result.contains("user_custom_key = 7")
             && result.contains("draw_resolution_scale_x = 1")
             && result.contains("volume = 0.5")
             && result.contains("[Vulkan]")
@@ -174,7 +192,15 @@ public final class MaliPerformance {
     }
 
     public static synchronized String apply(Context context,String titleId){
+        return apply(context,titleId,"performance",1);
+    }
+    public static synchronized String apply(Context context,String titleId,String preset,int customScale){
         try{
+            // Fail before modifying any file on an invalid profile or scale.
+            if(!("performance".equals(preset)||"balanced".equals(preset)
+                ||"quality".equals(preset)||"custom".equals(preset)))
+                return "Perfil desconhecido";
+            if(customScale<1||customScale>3)return "Resolucao aceita: 1x, 2x ou 3x";
             File config=configuration(context,titleId);
             File originalBackup=backup(config);
             File absentMarker=missing(config);
@@ -188,11 +214,13 @@ public final class MaliPerformance {
                         throw new IOException("Nao foi possivel criar marcador de recuperacao");
                 }
             }
-            String output=merge(read(config));
+            String output=merge(read(config),preset,customScale);
             if(output.getBytes(StandardCharsets.UTF_8).length>MAX_CONFIG)
                 throw new IOException("Resultado maior que 1 MB");
             atomicWrite(config,output);
-            return "Perfil Mali 1x aplicado a "+id(titleId)+
+            context.getSharedPreferences("x360_xenia_profiles",Context.MODE_PRIVATE).edit()
+                .putString(id(titleId),preset+"|"+customScale).apply();
+            return "Perfil "+preset+" aplicado ao jogo "+id(titleId)+
                 ". O ajuste sera lido na proxima inicializacao do jogo. FPS nao garantido.";
         }catch(Exception ex){
             return "Nao foi possivel aplicar o perfil: "+ex.getMessage();
@@ -208,16 +236,36 @@ public final class MaliPerformance {
                 atomicWrite(config,read(originalBackup));
                 Files.delete(originalBackup.toPath());
                 Files.deleteIfExists(absentMarker.toPath());
+                context.getSharedPreferences("x360_xenia_profiles",Context.MODE_PRIVATE).edit()
+                    .remove(id(titleId)).apply();
                 return "Configuracao anterior restaurada para "+id(titleId);
             }
             if(absentMarker.isFile()){
                 Files.deleteIfExists(config.toPath());
                 Files.delete(absentMarker.toPath());
+                context.getSharedPreferences("x360_xenia_profiles",Context.MODE_PRIVATE).edit()
+                    .remove(id(titleId)).apply();
                 return "Configuracao original (sem substituicao) restaurada para "+id(titleId);
             }
             return "Nenhuma configuracao anterior gerenciada pelo Nexus para "+id(titleId);
         }catch(Exception ex){
             return "Falha ao restaurar perfil: "+ex.getMessage();
+        }
+    }
+
+    public static String currentProfile(Context context,String titleId){
+        if(!validTitleId(titleId))return "Nao definido";
+        String raw=context.getSharedPreferences("x360_xenia_profiles",Context.MODE_PRIVATE)
+            .getString(titleId.toUpperCase(Locale.ROOT),"");
+        if(raw.isEmpty())return "Original";
+        String[] fields=raw.split("\\|");
+        if(fields.length!=2)return "Personalizado";
+        switch(fields[0]){
+            case "performance":return "Desempenho 1x";
+            case "balanced":return "Equilibrado 2x";
+            case "quality":return "Qualidade 2x + FXAA";
+            case "custom":return "Personalizado "+fields[1]+"x";
+            default:return "Personalizado";
         }
     }
 

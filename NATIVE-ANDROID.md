@@ -159,3 +159,28 @@ No game files, Xbox system keys or retail games are included.
 - Native performance configuration should be applied BEFORE playing; changing it during a running session does not affect that session.
 - **Signing warning:** GitHub Actions currently generates an ephemeral custom signing key. APKs built in separate workflow runs cannot be installed as in-place upgrades over earlier signed versions. Backup game worlds/app data before uninstalling the previous integrated version.
 - For third-party Xenia source/license see https://github.com/DEGROUCHO/xendroid-mali.
+
+
+## Version 10.3 — integrated Xenia GPU and per-game configuration manager
+
+- The Xenia/XenDroid ARM64 Vulkan graphics backend bundled in this APK provides
+  the actual game graphics translation. The Rust Xenos Lab remains ONLY a
+  software demonstrator; it is not Xenos GPU emulation.
+- Xenia does **not** provide guaranteed 100% faithful Xenos emulation or
+  universal game compatibility. No such capability is claimed.
+- Each game's **Title ID** provides its own backed-up and reversible configuration:
+  * Performance: internal rendering 1x, no FXAA/CAS, Mali-friendly Vulkan settings.
+  * Balanced: rendering 2x, no FXAA/CAS.
+  * Quality: rendering 2x, FXAA and CAS, higher texture anisotropy.
+  * Custom: rendering 1x/2x/3x (1x recommended for Galaxy A17).
+- An in-library profile manager selects, saves, and reverts these presets.
+- Profile settings are saved to the exact XenDroid per-game TOML overlay
+  at <app-specific-files>/compose/config/<TITLE_ID>.config.toml.
+- Existing config is backed up once to .nexus-original.bak and restored on request.
+  No game ISO, SAVES, Xbox player account, or licensed game content is altered.
+- The integrated q664 engine *requires* Android All Files Access in order to
+  launch a game, even when the Android document picker can scan ISO headers.
+  The UI now shows status and opens the Android settings screen on user action.
+- The user may open the bundled XenDroid UI to manage Xbox 360 player profiles.
+- NOTE: Performance improvements are not guaranteed; emulation may remain
+  slow due to CPU JIT, shaders, Mali Vulkan drivers or memory pressure.

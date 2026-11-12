@@ -106,9 +106,9 @@ def integrate(upstream, nexus, decoded, license_file):
            for x in application.findall("activity")):
         raise ValueError("Nexus launcher already exists")
 
-    root.set(A + "versionCode", "1002")
-    root.set(A + "versionName", "10.2-xenia-mali")
-    application.set(A + "label", "X360 Nexus 10.2 • Xenia Mali")
+    root.set(A + "versionCode", "1003")
+    root.set(A + "versionName", "10.3-xenia-mali-profiles")
+    application.set(A + "label", "X360 Nexus 10.3 • Xenia Mali")
     nexus_activity = ET.SubElement(application, "activity")
     nexus_activity.set(A + "name", "com.x360nexus.MainActivity")
     nexus_activity.set(A + "exported", "true")
@@ -119,6 +119,13 @@ def integrate(upstream, nexus, decoded, license_file):
     action.set(A + "name", "android.intent.action.MAIN")
     category = ET.SubElement(intent, "category")
     category.set(A + "name", "android.intent.category.LAUNCHER")
+
+    # XenDroid q664 EmulatorHostActivity requires this special access for
+    # real-path emulation. The user must grant it in Android Settings.
+    if not any(p.get(A + "name") == "android.permission.MANAGE_EXTERNAL_STORAGE"
+               for p in root.findall("uses-permission")):
+        perm=ET.SubElement(root,"uses-permission")
+        perm.set(A + "name","android.permission.MANAGE_EXTERNAL_STORAGE")
 
     if not any(p.get(A + "name") == "android.permission.VIBRATE"
                for p in root.findall("uses-permission")):
