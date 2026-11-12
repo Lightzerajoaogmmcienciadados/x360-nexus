@@ -1,0 +1,6 @@
+android/.gradle/
+android/build/
+android/app/build/
+native/rust-core/target/
+*.iml
+local.properties

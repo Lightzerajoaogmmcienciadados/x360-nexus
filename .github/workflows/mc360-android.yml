@@ -1,0 +1,47 @@
+name: MC360 Android Demo APK
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'mc360-android/**'
+      - '.github/workflows/mc360-android.yml'
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install SDK and NDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | head -n 1)"
+          test -x "$SDKMANAGER"
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+      - name: Test and cross-compile Rust
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
+          export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi24-clang"
+          cargo test --manifest-path mc360-android/native/rust-core/Cargo.toml
+          cargo build --manifest-path mc360-android/native/rust-core/Cargo.toml --target aarch64-linux-android --release
+          cargo build --manifest-path mc360-android/native/rust-core/Cargo.toml --target armv7-linux-androideabi --release
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Compile Android APK
+        run: gradle -p mc360-android/android :app:assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MC360-Android-Demo-APK
+          path: mc360-android/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
