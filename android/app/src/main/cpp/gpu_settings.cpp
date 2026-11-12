@@ -1,6 +1,7 @@
 // v4.5 GPU configuration bridge. Stores capability observations and user
 // preferences; it does NOT implement Xenos shader translation or custom drivers.
 #include <jni.h>
+#include "xenos_video.hpp"
 #include <mutex>
 #include <string>
 #include <algorithm>
@@ -27,12 +28,13 @@ Java_com_x360nexus_MainActivity_nativeSetGraphicsSettings(JNIEnv* e,jobject,jint
     if(backend<0||backend>2||resolution<0||resolution>3)return make(e,"Configuracoes invalidas");
     std::lock_guard<std::mutex> lk(config_lock);
     cfg.backend=backend;cfg.resolution=resolution;
+    x360::gpu::set_video_options(backend,resolution,vsync);
     // Do not pretend to install or enable Turnip: no alternative driver bundled.
     cfg.turnip=false;cfg.exact_shader=exact;cfg.shader_cache=cache;cfg.vsync=vsync;cfg.show_fps=fps;
     const char* names[]={"Auto","Vulkan solicitado","OpenGL ES solicitado"};
     std::string response=std::string("Preferencias registradas: ")+names[backend]+", escala "+
         (resolution==0?"0.5x":resolution==1?"1x":resolution==2?"1.5x":"2x");
     if(turnip)response+=" | Turnip NAO disponivel (sem driver embutido)";
-    response+=" | renderizador Xenos NAO implementado";
+    response+=" | diagnostico OpenGL ES ativo; traducao Xenos ausente";
     return make(e,response);
 }
