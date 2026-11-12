@@ -9,6 +9,8 @@ pub mod memory;
 pub mod galaxy;
 pub mod xex_trace;
 pub mod runtime;
+pub mod scheduler;
+pub mod mmu;
 mod galaxy_jni;
 use audio::Audio;
 use cpu::Cpu;

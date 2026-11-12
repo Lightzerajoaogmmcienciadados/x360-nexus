@@ -1,6 +1,6 @@
 //! Bounded, pausable PowerPC execution over a guest-addressed PE snapshot.
 //! Experimental: imports, full MMU, VMX128, FPU, and Xbox kernel are absent.
-use crate::{cpu::Cpu,kernel::Kernel,memory::Memory};
+use crate::{cpu::Cpu,kernel::Kernel,memory::Memory,scheduler::Scheduler};
 use jni::{JNIEnv,objects::{JByteArray,JLongArray,JObject},sys::{jint,jlong,jstring}};
 use std::{fmt::Write,sync::{Mutex,OnceLock},time::Instant};
 
@@ -9,7 +9,7 @@ const MAX_STEPS:u64=2_000_000;
 const TEST_ABI:u64=0x5845_0000;
 
 pub struct Session {
-    cpu:Cpu, mem:Memory, kernel:Kernel, exec:Vec<(usize,usize)>,
+    cpu:Cpu, mem:Memory, kernel:Kernel, exec:Vec<(usize,usize)>, scheduler:Scheduler,
     steps:u64, paused:Option<String>, last_event:String,
 }
 impl Session {
@@ -27,7 +27,13 @@ impl Session {
         }
         if !exec.iter().any(|&(lo,hi)|entry as usize>=lo && entry as usize+4<=hi){return Err("entry is not executable".into())}
         let mut cpu=Cpu::new();cpu.pc=entry as usize;
-        Ok(Self{cpu,mem:Memory::with_base(image,base),kernel:Kernel::new(),exec,steps:0,paused:None,last_event:String::new()})
+        let mut mem=Memory::with_base(image,base);
+        mem.set_all_permissions(Memory::READ|Memory::WRITE);
+        for &(lo,hi) in &exec {
+            mem.set_page_permissions(lo as u64,hi-lo,Memory::READ|Memory::EXECUTE)
+                .map_err(str::to_string)?;
+        }
+        Ok(Self{cpu,mem,kernel:Kernel::new(),exec,scheduler:Scheduler::new(),steps:0,paused:None,last_event:String::new()})
     }
     pub fn step_chunk(&mut self,limit:usize)->String{
         if let Some(reason)=&self.paused{return self.report("PAUSED",0.0,reason);}
@@ -41,17 +47,31 @@ impl Session {
             let opcode=match self.mem.read_u32_be(pc){Ok(x)=>x,Err(e)=>{self.paused=Some(format!("FALHA MEM @0x{pc:08X}: {e}"));break;}};
             let result=if opcode>>26==17 {
                 let service=self.cpu.gpr[0];
-                if !(TEST_ABI+1..=TEST_ABI+10).contains(&service){
+                if !(TEST_ABI+1..=TEST_ABI+19).contains(&service){
                     Err(format!("sc sem ABI de teste registrada r0=0x{service:X}; xboxkrnl/xam nao resolvidos"))
                 } else {
-                    let res=self.kernel.dispatch_private((service-TEST_ABI) as u32,&mut self.cpu.gpr,&mut self.mem);
-                    if res.is_ok(){self.cpu.pc=self.cpu.pc.saturating_add(4);}res.map(|event|{self.last_event=event;})
+                    let service_id=(service-TEST_ABI) as u32;
+                    // Diagnostic ABI for original tests only: r4 holds guest entry for a new thread.
+                    let requested_entry=self.cpu.gpr[4] as usize;
+                    let res=self.kernel.dispatch_private(service_id,&mut self.cpu.gpr,&mut self.mem);
+                    if res.is_ok(){self.cpu.pc=self.cpu.pc.saturating_add(4);}
+                    res.and_then(|event|{
+                        if service_id==6 {
+                            if !self.exec.iter().any(|&(lo,hi)|requested_entry>=lo && requested_entry.checked_add(4).is_some_and(|end|end<=hi)){
+                                return Err(format!("ExCreateThread: invalid entry 0x{requested_entry:08X}"));
+                            }
+                            let id=self.scheduler.spawn(requested_entry)?;
+                            self.last_event=format!("{event}; scheduled original test task {id}");
+                        } else {self.last_event=event;}
+                        Ok(())
+                    })
                 }
             }else{self.cpu.step_mut(&mut self.mem)};
             if let Err(e)=result{
                 self.paused=Some(format!("PARADA: {e} | PC=0x{pc:08X} OP={opcode:08X}"));break;
             }
             self.kernel.tick();self.steps+=1;executed+=1;
+            self.scheduler.tick(&mut self.cpu);
         }
         let sec=started.elapsed().as_secs_f64().max(1e-6);
         let ips=executed as f64/sec;
@@ -62,6 +82,7 @@ impl Session {
     fn report(&self,status:&str,ips:f64,reason:&str)->String{
         let mut s=format!("{status}|IPS={ips:.0}; INSTRUCOES={}; PC=0x{:08X}; LR=0x{:016X}; CTR=0x{:016X}; CR=0x{:08X}; RAM={} MiB\n",
             self.steps,self.cpu.pc,self.cpu.lr,self.cpu.ctr,self.cpu.cr,self.mem.len()/1024/1024);
+        let _=writeln!(s,"THREAD={} / total={} (cooperativo, ABI de teste)",self.scheduler.current_id(),self.scheduler.threads());
         if !reason.is_empty(){let _=writeln!(s,"{reason}");}
         if !self.last_event.is_empty(){let _=writeln!(s,"HLE: {}",self.last_event);}
         let opcode=self.mem.read_u32_be(self.cpu.pc).ok();
