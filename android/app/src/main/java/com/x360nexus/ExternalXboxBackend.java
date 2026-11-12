@@ -57,7 +57,9 @@ public final class ExternalXboxBackend {
             +"\nCPU Android ARM64: "+(arm64?"sim":"nao")
             +"\nVulkan no Android: "+(vulkan?"detectado":"nao detectado")
             +"\nGPU Mali: compatibilidade depende do modelo/driver"
-            +"\nBackend real e externo ao X360 Nexus."
+            +(isIntegrated(ctx)
+                ?"\nMotor Xenia integrado no APK (processo :emu)."
+                :"\nMotor Xenia instalado externamente ao X360 Nexus.");
             +"\nNao garante inicializacao nem desempenho de jogos.";
     }
 
@@ -75,7 +77,12 @@ public final class ExternalXboxBackend {
      * JIT, HLE, Vulkan command processing and game execution are entirely
      * performed by XenDroid's separate app/process, if installed.
      */
-    public static String play(Activity activity,Uri gameUri){
+    public static String play(Activity activity,Uri gameUri) {
+        return play(activity,gameUri,null,null);
+    }
+
+    public static String play(Activity activity,Uri gameUri,
+        String gameName,String titleId){
         if(gameUri==null || gameUri.getScheme()==null)
             return "Caminho do jogo invalido";
         if(!isInstalled(activity))
@@ -84,12 +91,18 @@ public final class ExternalXboxBackend {
             Intent launch=new Intent(ACTION);
             launch.setClassName(PACKAGE,ACTIVITY);
             launch.putExtra("game_uri",gameUri.toString());
+            if(gameName!=null && !gameName.isEmpty())
+                launch.putExtra("game_name",gameName);
+            if(MaliPerformance.validTitleId(titleId))
+                launch.putExtra("title_id",titleId.toUpperCase(java.util.Locale.ROOT));
             // Carry a real one-time SAF grant for the external process.
             launch.setData(gameUri);
             launch.setClipData(ClipData.newRawUri("Xbox 360 game",gameUri));
             launch.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             activity.startActivity(launch);
-            return "Jogo enviado ao XenDroid. A execucao depende do aparelho e do jogo.";
+            return isIntegrated(activity)
+                ?"Jogo enviado ao motor Xenia integrado. Verifique carregamento e FPS."
+                :"Jogo enviado ao XenDroid externo. Compatibilidade depende do jogo.";
         }catch(ActivityNotFoundException e){
             return "XenDroid presente, mas a atividade de execucao nao foi encontrada";
         }catch(SecurityException e){

@@ -1,4 +1,4 @@
-# X360 Nexus — Xenia Mali Integrado (10.1)
+# X360 Nexus — Xenia Mali com perfil de desempenho (10.2)
 
 Native Android APK: Java/Android SDK, OpenGL ES 2, Android AudioTrack and Rust JNI (ARM64-v8a).
 
@@ -145,3 +145,17 @@ No game files, Xbox system keys or retail games are included.
 - Signed custom package uses xendroid.compose; installing alongside release-signed XenDroid can fail with signing mismatch. Uninstalling XenDroid may delete app data.
 - This is binary integration with an open-source Xenia fork, NOT a newly implemented full Xenia core in Rust.
 - Compatibility and performance on Galaxy A17 have not been independently tested. No games, BIOS or keys bundled.
+
+
+## 10.2 — Xenia game execution and Mali tuning per game
+
+- Keeps the **real Xenia/XenDroid Mali q664 ARM64 engine inside the SAME Android APK**. The X360 Nexus Library's **Jogar no X360 Nexus (Xenia integrado)** button passes the chosen ISO/XEX URI and optional title-id/game-name to the original emulator host.
+- Adds an optional **Mali performance profile** per valid X360 Title ID in the native XenDroid configuration directory: `<getExternalFilesDir("compose")>/config/<TITLE_ID>.config.toml`.
+- Uses documented XenDroid performance preset values: 1x draw resolution, no FXAA/postprocess, tiler-friendly Vulkan resolves, native 2x MSAA (preferred to the fallback 4x), and fake occlusion. No overclocking or firmware modifications.
+- Preserves unrelated TOML settings. Takes a **one-time original backup** before the first modification, or notes that the config was originally missing; button **Restaurar configuração original** restores it. Settings take effect **on the next launch**.
+- Users with games where XEX/STFS Title ID is unavailable can enter the game's actual hexadecimal Title ID; invalid IDs are rejected.
+- The preset is opt-in. Applying it **does not guarantee faster Minecraft** on Galaxy A17: CPU, memory, JIT, shader compilation and GPU Vulkan drivers may be the bottleneck.
+- Original Android game file, world/save data, audio and gamepad controls are not modified.
+- Native performance configuration should be applied BEFORE playing; changing it during a running session does not affect that session.
+- **Signing warning:** GitHub Actions currently generates an ephemeral custom signing key. APKs built in separate workflow runs cannot be installed as in-place upgrades over earlier signed versions. Backup game worlds/app data before uninstalling the previous integrated version.
+- For third-party Xenia source/license see https://github.com/DEGROUCHO/xendroid-mali.

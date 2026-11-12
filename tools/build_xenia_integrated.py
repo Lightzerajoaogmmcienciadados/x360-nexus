@@ -106,7 +106,9 @@ def integrate(upstream, nexus, decoded, license_file):
            for x in application.findall("activity")):
         raise ValueError("Nexus launcher already exists")
 
-    application.set(A + "label", "X360 Nexus • Xenia Mali")
+    root.set(A + "versionCode", "1002")
+    root.set(A + "versionName", "10.2-xenia-mali")
+    application.set(A + "label", "X360 Nexus 10.2 • Xenia Mali")
     nexus_activity = ET.SubElement(application, "activity")
     nexus_activity.set(A + "name", "com.x360nexus.MainActivity")
     nexus_activity.set(A + "exported", "true")

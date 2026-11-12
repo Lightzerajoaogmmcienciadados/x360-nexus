@@ -243,7 +243,7 @@ public final class MainActivity extends Activity {
         add(content,emulator,18);
         add(emulator,text(ExternalXboxBackend.diagnostic(this),12,LIGHT,false),10);
         Button emulatorSite=outlined(bundledEngine
-            ?"Abrir interface completa Xenia Mali"
+            ?"Abrir configurações completas Xenia Mali"
             :"Instalar motor XenDroid Mali");
         add(emulator,emulatorSite,11);
         emulatorSite.setOnClickListener(v->ExternalXboxBackend.openProject(this));
@@ -495,12 +495,19 @@ public final class MainActivity extends Activity {
             add(card,choose,13);
             choose.setOnClickListener(v->chooseCoverForGame(uri));
             if(ExternalXboxBackend.supportsFile(name)){
-                Button play=button("▶ Jogar via XenDroid Mali");
+                final String gameTitleId=titleId;
+                Button play=button("▶ Jogar no X360 Nexus (Xenia integrado)");
                 add(card,play,11);
                 play.setOnClickListener(v->{
-                    String result=ExternalXboxBackend.play(this,Uri.parse(uri));
+                    String result=ExternalXboxBackend.play(this,Uri.parse(uri),name,gameTitleId);
                     Toast.makeText(this,result,Toast.LENGTH_LONG).show();
                 });
+                if(ExternalXboxBackend.isIntegrated(this)){
+                    Button optimize=outlined("⚡ Perfil de desempenho Mali / Minecraft");
+                    add(card,optimize,10);
+                    optimize.setOnClickListener(v->
+                        showMaliPerformanceSettings(uri,name,gameTitleId));
+                }
             }
             Button favorite=outlined(item.optBoolean("favorite",false)
                 ?"★ Favorito — desmarcar":"☆ Adicionar aos favoritos");
@@ -570,6 +577,80 @@ public final class MainActivity extends Activity {
         java.util.regex.Matcher m=java.util.regex.Pattern.compile(
             "(?im)^Title ID:\\s*([0-9a-f]{8})\\s*$").matcher(report);
         return m.find()?m.group(1).toUpperCase(Locale.ROOT):"";
+    }
+
+    /**
+     * Enables a XenDroid per-title graphics profile before the next game boot.
+     * Existing per-title TOML is backed up before the first modification.
+     * No game ISO or save data is touched.
+     */
+    private void showMaliPerformanceSettings(String gameUri,String gameName,String titleId){
+        if(!ExternalXboxBackend.isIntegrated(this)){
+            Toast.makeText(this,"Motor Xenia não integrado neste APK",Toast.LENGTH_LONG).show();
+            return;
+        }
+        if(MaliPerformance.validTitleId(titleId)){
+            showMaliPerformanceOptions(gameName,titleId.toUpperCase(Locale.ROOT));
+            return;
+        }
+        EditText entry=new EditText(this);
+        entry.setSingleLine(true);
+        entry.setHint("Ex.: 584111F7");
+        entry.setTextColor(LIGHT);
+        entry.setHintTextColor(MUTED);
+        entry.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+            |android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("Title ID do jogo")
+            .setMessage("Esse arquivo não informou o Title ID. Consulte os detalhes do jogo e insira o identificador real de 8 dígitos hexadecimais.")
+            .setView(entry)
+            .setNegativeButton("Cancelar",null)
+            .setPositiveButton("Continuar",(d,which)->{
+                String parsed=entry.getText().toString().trim().toUpperCase(Locale.ROOT);
+                if(!MaliPerformance.validTitleId(parsed)){
+                    Toast.makeText(this,"Title ID inválido. Não alterei as configurações.",
+                        Toast.LENGTH_LONG).show();
+                    return;
+                }
+                JSONArray library=loadLibrary();
+                for(int k=0;k<library.length();k++){
+                    JSONObject item=library.optJSONObject(k);
+                    if(item!=null && gameUri.equals(item.optString("uri"))){
+                        try{item.put("titleId",parsed);}catch(Exception ignored){}
+                    }
+                }
+                saveLibrary(library);
+                showMaliPerformanceOptions(gameName,parsed);
+            }).show();
+    }
+
+    private void showMaliPerformanceOptions(String gameName,String titleId){
+        final String[] actions={
+            "Aplicar desempenho Mali: resolução 1x, sem pós-processamento",
+            "Restaurar configuração original desse jogo",
+            "Abrir configurações completas do motor Xenia"
+        };
+        boolean managed=MaliPerformance.isManaged(this,titleId);
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("Desempenho Mali • "+gameName)
+            .setMessage("Title ID: "+titleId+"\nEstado: "
+                +(managed?"perfil Nexus aplicado ou com cópia de segurança":"sem perfil Nexus")
+                +"\n\nAs alterações entram em vigor na próxima inicialização."
+                +"\nPode melhorar o desempenho, mas não garante FPS.")
+            .setItems(actions,(dialog,selected)->{
+                if(selected==2){
+                    ExternalXboxBackend.openProject(this);
+                    return;
+                }
+                new Thread(()->{
+                    String result=selected==0
+                        ?MaliPerformance.apply(this,titleId)
+                        :MaliPerformance.restore(this,titleId);
+                    runOnUiThread(()->Toast.makeText(this,result,Toast.LENGTH_LONG).show());
+                },"x360-mali-profile").start();
+            })
+            .setNegativeButton("Cancelar",null)
+            .show();
     }
 
     private void chooseCoverForGame(String gameUri){
@@ -816,9 +897,9 @@ public final class MainActivity extends Activity {
         return super.onGenericMotionEvent(event);
     }
     private void about() {
-        heading("Sobre o X360 Nexus","Build Android 10.1 • Xenia Mali integrado");
+        heading("Sobre o X360 Nexus","Build Android 10.2 • Xenia Mali integrado e otimização por jogo");
         status("ARQUITETURA","Android SDK + OpenGL ES 2.0 + AudioTrack + Rust JNI aarch64.");
-        status("SUPORTE ATUAL","Biblioteca com capas, controles e vibração; GPU LAB Rust; XEX2/ISO e diagnóstico. Edição integrada: runtime Xenia/XenDroid Mali em processo separado dentro deste mesmo APK.");
+        status("SUPORTE ATUAL","Xenia/XenDroid Mali ARM64 integrado para iniciar jogos; perfis gráficos por Title ID com backup/restauração, biblioteca com capas, controles e vibração; GPU LAB Rust e leitura XEX2/ISO.");
         status("MOTOR XENIA MALI",ExternalXboxBackend.isIntegrated(this)
             ?"Nucleo Xenia ARM64 integrado ao APK. Execucao de jogos ocorre em processo de emulacao proprio (XenDroid), com Vulkan."
             :"Apenas integracao com motor externo. Instale o emulador XenDroid separadamente.");
