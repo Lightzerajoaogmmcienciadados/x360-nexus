@@ -1,7 +1,10 @@
 #include "xdvdfs.hpp"
+#include "xex_loader.hpp"
 #include <jni.h>
 
 #include <cstdio>
+#include <vector>
+#include <optional>
 #include <exception>
 #include <memory>
 #include <mutex>
@@ -19,6 +22,8 @@ std::unique_ptr<GuestRam> g_ram;
 uint32_t g_loaded_bytes=0;
 uint32_t g_loaded_crc=0;
 std::string g_loaded_path;
+std::vector<uint8_t> g_raw_xex; // Original staged bytes, retained after PE mapping.
+std::optional<x360::xex::PreparedImage> g_prepared;
 
 jstring java_string(JNIEnv* env, const std::string& s) {
     // Paths are ASCII-sanitized by the XDVDFS reader; avoid embedded NUL.
@@ -80,6 +85,8 @@ Java_com_x360nexus_MainActivity_nativeLoadDefaultXex(JNIEnv* env, jobject, jint 
             g_loaded_path=file.path;
             g_loaded_bytes=loaded.loaded_bytes;
             g_loaded_crc=loaded.crc32;
+            g_raw_xex.clear();
+            g_prepared.reset();
         }
         return java_string(env,"default.xex armazenado na RAM emulada!\n"
             "Arquivo: "+file.path+"\n"
@@ -120,5 +127,75 @@ Java_com_x360nexus_MainActivity_nativeGuestRamStatus(JNIEnv* env, jobject) {
         "Bytes em staging: "+std::to_string(g_loaded_bytes)+"\n"
         "Host RAM utilizada: "+std::to_string(g_ram->allocated_bytes())+" bytes\n"
         "CRC32: "+format_hex(g_loaded_crc)+"\n"
-        "Leitura de verificacao: "+std::string(header,header+4));
+        "Primeira palavra big-endian: "+format_hex((uint32_t(header[0])<<24) | (uint32_t(header[1])<<16) | (uint32_t(header[2])<<8) | header[3]));
+}
+
+// v4.3 — metadata of the XEX2 already stored in the shared C++ guest RAM.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_x360nexus_MainActivity_nativeInspectStagedXex(JNIEnv* env, jobject) {
+    try {
+        std::lock_guard<std::mutex> lock(g_memory_mutex);
+        if(!g_ram || !g_loaded_bytes) return java_string(env,"Primeiro use 3. CARREGAR default.xex NA RAM EMULADA");
+        if(g_raw_xex.empty()) {
+            g_raw_xex.resize(g_loaded_bytes);
+            g_ram->read(x360::xdvdfs::kGuestRamBase,g_raw_xex.data(),g_raw_xex.size());
+        }
+        const auto h=x360::xex::parse_headers(g_raw_xex);
+        return java_string(env,x360::xex::describe(h));
+    } catch(const std::exception& e) {
+        return java_string(env,std::string("Falha analisando XEX2: ")+e.what());
+    }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_x360nexus_MainActivity_nativePrepareStagedXex(JNIEnv* env, jobject) {
+    try {
+        std::lock_guard<std::mutex> lock(g_memory_mutex);
+        if(!g_ram || !g_loaded_bytes) return java_string(env,"Primeiro carregue default.xex pelo botao 3.");
+        if(g_raw_xex.empty()) {
+            g_raw_xex.resize(g_loaded_bytes);
+            g_ram->read(x360::xdvdfs::kGuestRamBase,g_raw_xex.data(),g_raw_xex.size());
+        }
+        const auto headers=x360::xex::parse_headers(g_raw_xex);
+        auto pe=x360::xex::extract_pe(g_raw_xex,headers);
+        if(pe.size()>x360::xex::kMaxPeBytes) throw std::runtime_error("PE fora do limite");
+        auto next=std::make_unique<GuestRam>();
+        auto prepared=x360::xex::map_pe(pe,headers,*next);
+        g_prepared=std::move(prepared);
+        g_ram=std::move(next);
+        return java_string(env,"PE32 POWERPCBE preparado na RAM!\nBase: "+format_hex(g_prepared->base)+
+            "\nEntry Point: "+format_hex(g_prepared->pc)+
+            "\nSecoes: "+std::to_string(g_prepared->sections.size())+
+            "\nBibliotecas importadas: "+std::to_string(g_prepared->imports.size())+
+            "\nImports xboxkrnl/xam: pendentes de resolucao real.\n"
+            "CPU Rust limitada a instrucoes implementadas; sem GPU/kernel Xbox 360 completos.");
+    } catch(const std::exception& e) {
+        {
+            std::lock_guard<std::mutex> lock(g_memory_mutex);
+            g_prepared.reset();
+        }
+        return java_string(env,std::string("XEX2 identificado, mas PE nao preparado: ")+e.what());
+    }
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_x360nexus_MainActivity_nativePreparedEntryPoint(JNIEnv*, jobject) {
+    std::lock_guard<std::mutex> lock(g_memory_mutex);
+    return g_prepared?static_cast<jlong>(g_prepared->pc):0;
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_x360nexus_MainActivity_nativeFetchCodeWindow(JNIEnv* env, jobject, jlong address, jint length) {
+    std::lock_guard<std::mutex> lock(g_memory_mutex);
+    if(!g_prepared || !g_ram || address<0 || address>UINT32_MAX || length<=0 || length>4096 || (length%4))
+        return nullptr;
+    const auto at=static_cast<uint32_t>(address);
+    if(!g_prepared->can_fetch(at,static_cast<size_t>(length)))return nullptr;
+    std::vector<uint8_t> bytes(static_cast<size_t>(length));
+    try {g_ram->read(at,bytes.data(),bytes.size());}
+    catch (...) {return nullptr;}
+    auto array=env->NewByteArray(length);
+    if(!array)return nullptr;
+    env->SetByteArrayRegion(array,0,length,reinterpret_cast<const jbyte*>(bytes.data()));
+    return array;
 }
