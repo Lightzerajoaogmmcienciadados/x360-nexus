@@ -8,6 +8,13 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.provider.OpenableColumns
 import android.view.View
+import android.view.SurfaceHolder
+import android.view.SurfaceView
+import android.view.Surface
+import android.view.MotionEvent
+import android.view.KeyEvent
+import android.os.Handler
+import android.os.Looper
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
@@ -46,6 +53,13 @@ class MainActivity : Activity() {
     private external fun nativeStartSession(image:ByteArray,base:Long,entry:Long,ranges:LongArray):String
     private external fun nativeRunSessionChunk(steps:Int):String
     private external fun nativeStopSession():String
+    private external fun nativeSetVideoSurface(surface:Surface?):String
+    private external fun nativeRenderVideoFrame():String
+    private external fun nativeVideoStats():String
+    private external fun nativeSubmitDemoPm4():String
+    private external fun nativeProcessPm4(address:Long, dwords:Int):String
+    private external fun nativeSetButton(mask:Int, pressed:Boolean)
+    private external fun nativeSetAxis(axis:Int, value:Int)
     private external fun nativeSetGpuCapabilities(renderer:String,gles:String,vulkan:String):String
     private external fun nativeSetGraphicsSettings(backend:Int,resolution:Int,turnip:Boolean,
         exact:Boolean,cache:Boolean,vsync:Boolean,fps:Boolean):String
@@ -54,8 +68,33 @@ class MainActivity : Activity() {
     private val games=mutableListOf<Game>()
     private var selected:Uri?=null
     private val worker=Executors.newSingleThreadExecutor()
+    private val videoWorker=Executors.newSingleThreadExecutor()
+    private val videoHandler=Handler(Looper.getMainLooper())
+    private val videoQueued=AtomicBoolean(false)
+    @Volatile private var videoActive=false
+    private var videoTickCount=0
+    private val videoTick=object:Runnable {
+        override fun run() {
+            if(!videoActive)return
+            if(videoQueued.compareAndSet(false,true)){
+                videoWorker.execute {
+                    try {
+                        val msg=if(NATIVE_READY)nativeRenderVideoFrame() else "C++ JNI indisponivel"
+                        if(msg.contains("failed") || msg.contains("indisponivel"))uiLog(msg)
+                        videoTickCount++
+                        if(videoTickCount%45==0 && NATIVE_READY){
+                            val stat=nativeVideoStats()
+                            runOnUiThread {findViewById<TextView>(R.id.videoStats).text=stat}
+                        }
+                    }catch(t:Throwable){uiLog("GPU EGL: ${t.message}")}
+                    finally {videoQueued.set(false)}
+                }
+            }
+            videoHandler.postDelayed(this,33L)
+        }
+    }
     private val continueRunning=AtomicBoolean(false)
-    private val prefs by lazy {getSharedPreferences("x360-v45",MODE_PRIVATE)}
+    private val prefs by lazy {getSharedPreferences("x360-v50",MODE_PRIVATE)}
     private lateinit var console:TextView
     private lateinit var telemetry:TextView
     private lateinit var gpuText:TextView
@@ -156,6 +195,11 @@ class MainActivity : Activity() {
         vsync=findViewById(R.id.vsync)
         showFps=findViewById(R.id.fpsToggle)
         restoreSettings();readStoredGames();renderGames()
+        setupVideo()
+        setupPad()
+        findViewById<Button>(R.id.pm4Demo).setOnClickListener {
+            if(NATIVE_READY)log(nativeSubmitDemoPm4()) else log("PM4 JNI indisponivel")
+        }
         findViewById<Button>(R.id.selectIso).setOnClickListener {if(!busy)picker()}
         findViewById<Button>(R.id.loadKey).setOnClickListener {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{
@@ -175,7 +219,7 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.consoleToggle).setOnClickListener {
             console.visibility=if(console.visibility==View.VISIBLE)View.GONE else View.VISIBLE
         }
-        log("v4.5: Rust JNI=${RUST_READY}, C++ JNI=${NATIVE_READY}. Execução limitada a snapshot de PE32.")
+        log("v5.0: Rust JNI=${RUST_READY}, C++ JNI=${NATIVE_READY}. Execução limitada a snapshot de PE32.")
         worker.execute {
             val info=GpuDetector.query(this)
             currentGpu="${info.family}\n${info.renderer}\nOpenGL ES: ${info.version}\nVulkan: ${info.vulkan}"
@@ -211,7 +255,7 @@ class MainActivity : Activity() {
                         val payload=lastReport
                         runOnUiThread {
                             val ips=Regex("IPS=([0-9]+)").find(payload)?.groupValues?.get(1)?:"0"
-                            telemetry.text="RAM snapshot: ${info[2]/1024/1024} MiB | IPS: $ips | FPS: N/D (sem Xenos)"
+                            telemetry.text="RAM snapshot: ${info[2]/1024/1024} MiB | IPS: $ips | GPU: demo GLES (nao Xenos)"
                             log(payload)
                         }
                         lastHud=now
@@ -259,9 +303,77 @@ class MainActivity : Activity() {
             }
         }
     }
+    private fun setupVideo(){
+        val surface=findViewById<SurfaceView>(R.id.videoSurface)
+        surface.holder.addCallback(object:SurfaceHolder.Callback {
+            override fun surfaceCreated(holder:SurfaceHolder) {
+                videoActive=true
+                videoWorker.execute {if(NATIVE_READY)nativeSetVideoSurface(holder.surface)}
+                videoHandler.removeCallbacks(videoTick)
+                videoHandler.post(videoTick)
+            }
+            override fun surfaceChanged(holder:SurfaceHolder,format:Int,width:Int,height:Int) {
+                // EGL viewport is updated on the dedicated video worker.
+            }
+            override fun surfaceDestroyed(holder:SurfaceHolder) {
+                videoActive=false
+                videoHandler.removeCallbacks(videoTick)
+                videoWorker.execute {if(NATIVE_READY)nativeSetVideoSurface(null)}
+            }
+        })
+    }
+    private fun touchButton(id:Int,mask:Int){
+        findViewById<Button>(id).setOnTouchListener {_,event ->
+            when(event.actionMasked){
+                MotionEvent.ACTION_DOWN->{if(RUST_READY)nativeSetButton(mask,true);true}
+                MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL->{if(RUST_READY)nativeSetButton(mask,false);true}
+                else->true
+            }
+        }
+    }
+    private fun setupPad(){
+        touchButton(R.id.padA,0x1000)
+        touchButton(R.id.padB,0x2000)
+        touchButton(R.id.padLeft,0x0004)
+        touchButton(R.id.padRight,0x0008)
+    }
+    override fun onKeyDown(keyCode:Int,event:KeyEvent?):Boolean {
+        val mask=when(keyCode){
+            KeyEvent.KEYCODE_BUTTON_A->0x1000
+            KeyEvent.KEYCODE_BUTTON_B->0x2000
+            KeyEvent.KEYCODE_DPAD_LEFT->0x0004
+            KeyEvent.KEYCODE_DPAD_RIGHT->0x0008
+            else->0
+        }
+        if(mask!=0 && RUST_READY){nativeSetButton(mask,true);return true}
+        return super.onKeyDown(keyCode,event)
+    }
+    override fun onKeyUp(keyCode:Int,event:KeyEvent?):Boolean {
+        val mask=when(keyCode){
+            KeyEvent.KEYCODE_BUTTON_A->0x1000
+            KeyEvent.KEYCODE_BUTTON_B->0x2000
+            KeyEvent.KEYCODE_DPAD_LEFT->0x0004
+            KeyEvent.KEYCODE_DPAD_RIGHT->0x0008
+            else->0
+        }
+        if(mask!=0 && RUST_READY){nativeSetButton(mask,false);return true}
+        return super.onKeyUp(keyCode,event)
+    }
+    override fun onGenericMotionEvent(event:MotionEvent):Boolean {
+        if(event.source and android.view.InputDevice.SOURCE_JOYSTICK==android.view.InputDevice.SOURCE_JOYSTICK && RUST_READY){
+            nativeSetAxis(0,(event.getAxisValue(MotionEvent.AXIS_X)*32767f).toInt())
+            nativeSetAxis(1,(event.getAxisValue(MotionEvent.AXIS_Y)*32767f).toInt())
+            return true
+        }
+        return super.onGenericMotionEvent(event)
+    }
     override fun onDestroy(){
+        videoActive=false
+        videoHandler.removeCallbacks(videoTick)
         continueRunning.set(false)
         worker.shutdownNow()
+        videoWorker.execute {if(NATIVE_READY)nativeSetVideoSurface(null)}
+        videoWorker.shutdown()
         if(NATIVE_READY)nativeClearXexKey()
         super.onDestroy()
     }
