@@ -1,80 +1,54 @@
-# X360 Nexus / Project Xenon v4.2 — Android ISO/XDVDFS
+# X360 Nexus v4.3 — XEX2 parser + PE32 loader + bounded CPU tracing
 
-Uma atualização **incremental** para o projeto Rust/JNI v4.1 já presente em
-`Lightzerajoaogmmcienciadados/x360-nexus`. Acrescenta um leitor XDVDFS em C++20,
-biblioteca Android JNI própria e interface para listar e copiar arquivos de ISO.
+Incremental educational update of the existing v4.2 Rust/C++ Android application.
 
-## O que funciona
+## What is implemented
 
-- Abre via Storage Access Framework (ACTION_OPEN_DOCUMENT) sem permissão de armazenamento geral.
-- Faz leitura aleatória, com `pread`, de imagens de vários GiB sem carregá-las inteiras.
-- Detecta a assinatura exata **`MICROSOFT*XBOX*MEDIA`** (20 bytes) no setor 32
-  em relação aos offsets usuais XISO, XGD2, XGD3, XGD1 e XGD2 hybrid.
-- Valida também a segunda assinatura no final do descritor de volume.
-- Lê campos little-endian do XDVDFS, incluindo tabela de diretórios como árvore binária,
-  caminha recursivamente por subpastas, detecta ciclos, impõe limites de segurança.
-- Localiza `default.xex` case-insensitive, preferindo arquivo na raiz.
-- Extrai `default.xex` para arquivo escolhido pelo usuário, com leitura em blocos de 64 KiB.
-- Copia bytes brutos de `default.xex` diretamente para **RAM emulada esparsa** de 512 MiB
-  iniciada em `0x82000000`, com limite seguro de XEX de 128 MiB; imprime CRC32 e
-  verifica a assinatura XEX2 na memória.
-- Preserva teste PowerPC Rust JNI da v4.1, e cria biblioteca JNI C++ `libx360xdvdfs.so`.
+- Keeps XDVDFS ISO listing and `default.xex` raw staging from v4.2.
+- Parses XEX2 fixed and optional headers (big-endian), Security Info, File Format Info, Image Base, Entry Point, Title ID, and import-library descriptors (read-only diagnostics).
+- Extracts unencrypted, uncompressed XEX payloads and handles XEX Basic block plus zero-fill expansion (hard cap 128 MiB).
+- Implements a standalone portable AES-128-CBC primitive tested with standard AES vectors. An already unwrapped **session key** must be supplied by the legitimate test program developer; the Android UI never embeds a console retail key.
+- Maps a valid POWERPCBE PE32 basefile to sparse guest RAM according to the section table and checks executable entrypoint; replaces raw staging with mapped PE in shared C++ RAM.
+- Kotlin Android interface: **5. EXECUTAR XEX NA CPU (TRACE LIMITADO)**. This button attempts preparation and sends at most 256 bytes from a valid executable section via JNI to the Rust PPC interpreter.
+- Rust diagnostic trace: executes up to 32 recognized PPC instructions (`addi`, `addis`, `ori`, `oris`, `add`, `b/bl`), stops at unsupported opcodes/syscalls, and prints PC/LR/CTR and GPR0-GPR7.
+- Includes C++ XDVDFS + XEX unit tests and Rust CPU/trace tests. GitHub Actions builds ARM64 APK with Rust and C++ JNI.
 
-## Limitações importantes
+## What is NOT implemented
 
-- Carregar um **arquivo XEX bruto** em staging é diferente de carregá-lo como programa
-  executável: esta versão não descriptografa nem descompacta conteúdo, não remapeia
-  seções XEX na memória de execução, não resolve imports e **não inicia jogos**.
-- A RAM esparsa C++ é separada da memória de trabalho da CPU Rust. A integração entre
-  esses espaços é uma etapa posterior, não foi apresentada como pronta.
-- Não reproduz integralmente o firmware, kernel ou GPU do Xbox 360.
-- Algumas ISOs de formatos híbridos atípicos ou provedores Android sem `seek` precisam
-  de adaptações. Selecionar a ISO local pelo gerenciador de arquivos costuma funcionar.
-- O leitor suporta setores XDVDFS usuais de 2048 bytes e arquivos de até 4 GiB no
-  registro; a operação de **staging** limita XEX a 128 MiB e **exportação** a 512 MiB.
-- A listagem no Android mostra até 350 arquivos para não sobrecarregar a tela, mas
-  os diretórios são percorridos até um limite de 15.000 entradas.
+- No bundled retail console keys; no automatic session-key unwrap or commercial XEX decryption. Encrypted files show a diagnostic rather than pretending to execute.
+- XEX LZX (normal) is detected and **not decompressed**. Basic and uncompressed formats work under the stated constraints.
+- Real xboxkrnl.exe / xam.xex import ordinal resolution and kernel-service emulation are **not implemented**: library names and raw guest slots are enumerated as unresolved imports; no fake successful return codes.
+- The Rust CPU receives only a bounded code window copied from C++ guest memory. Branches outside the slice stop; this is not a full cross-language guest MMU bridge.
+- No complete Xbox 360 Xenon JIT, Xenos graphics, real firmware/kernel or commercial game execution.
 
-## Como atualizar seu repositório
+## Main files (C++, Rust, Kotlin)
 
-Copie os caminhos deste pacote para a mesma estrutura no repositório. Os arquivos
-`core/` (Rust) e demais componentes anteriores são preservados. Ou use a branch
-proposta pelo projeto que contém essas alterações.
+- `android/app/src/main/cpp/xex_loader.hpp` & `xex_loader.cpp` — metadata, import inventory, PE32 mapping and Basic decompression.
+- `android/app/src/main/cpp/xex_crypto.cpp` — AES-128-CBC utility with caller-provided session key.
+- `android/app/src/main/cpp/jni_bridge.cpp` — existing ISO/staging functions plus XEX analysis, PE preparation and code-slice read.
+- `core/src/xex_trace.rs` & `cpu.rs` & `lib.rs` — bounded interpreter and JNI bridge to Kotlin.
+- `android/app/src/main/java/com/x360nexus/MainActivity.kt` — UI replacing the old Java class.
+- `tests/xex_loader_tests.cpp` — synthetic XEX + PE fixture, AES test vector and corruption guards.
 
-Para testar o leitor C++ em Windows/Linux:
+## Important build configuration
+
+The Android UI is now **Kotlin**, so `android/build.gradle` and `android/app/build.gradle` enable the Kotlin plugin (version 2.0.21), and the old `MainActivity.java` is removed to avoid duplicate Java classes. CMake includes `xex_loader.cpp` and `xex_crypto.cpp` in `libx360xdvdfs.so`; the existing Rust `libx360nexus.so` is retained. CI is `.github/workflows/build-x360-android-apk.yml`.
+
+## Test on PC (C++ only)
 
 ```sh
-cmake -S . -B build/xdvdfs-host -DCMAKE_BUILD_TYPE=Release
-cmake --build build/xdvdfs-host
-ctest --test-dir build/xdvdfs-host --output-on-failure
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build --output-on-failure
 ```
 
-Para construir o aplicativo Android ARM64, use `.github/workflows/build-x360-android-apk.yml`.
-O workflow instala SDK Android 35, NDK 27.2.12479018, CMake 3.22.1, Rust ARM64 e
-Gradle 8.10.2. O build inclui ambas as bibliotecas JNI, Rust e C++.
+## Use on Android
 
-## Android — como usar
+1. Select a locally accessible ISO using SAF.
+2. Analyze ISO, then load raw `default.xex` into staging.
+3. Use **ANALISAR CABECALHOS XEX2** to inspect encryption/compression, base and entrypoint.
+4. Use **5. EXECUTAR XEX NA CPU (TRACE LIMITADO)**. If protected/LZX, the app explains the blocker. An unencrypted PE32/XEX homebrew fixture can be mapped and stepped up to 32 instructions.
 
-1. Abra o app e escolha **SELECIONAR ISO**.
-2. Toque em **ANALISAR ISO E LISTAR ARQUIVOS** para ver caminhos e tamanhos.
-3. Toque em **CARREGAR default.xex NA RAM EMULADA** para testar o staging.
-4. Opcionalmente toque em **EXTRAIR default.xex PARA ARQUIVO** para salvar o XEX
-   em um local que você escolheu.
-5. **CONSULTAR MEMORIA RAM EMULADA** exibe informação da última cópia.
+No official Xbox game is bundled; use only files you have permission to inspect.
 
-Os testes são realizados com ISOs sintéticas geradas em tempo de execução;
-o projeto não inclui arquivos de jogos comerciais.
-
-## Estrutura desta atualização
-
-- `android/app/src/main/cpp/xdvdfs.{hpp,cpp}`: leitura, diretórios, RAM esparsa
-- `android/app/src/main/cpp/jni_bridge.cpp`: JNI para inspeção, staging, exportação
-- `android/app/src/main/cpp/CMakeLists.txt`: compilar `libx360xdvdfs.so`
-- `android/app/src/main/java/com/x360nexus/MainActivity.java`: interface Android
-- `android/app/build.gradle`: novo alvo C++ no aplicativo
-- `android/app/src/main/AndroidManifest.xml`: nome atualizado do aplicativo
-- `tests/xdvdfs_tests.cpp`: testes XISO/XGD2/XGD3 e entradas inválidas
-- `CMakeLists.txt`: compilação de testes C++ em PC
-- `.github/workflows/build-x360-android-apk.yml`: CI Android e validação das 2 bibliotecas
-
-Referência de formato: https://xboxdevwiki.net/XDVDFS
+References: https://github.com/xenia-project/xenia/blob/master/src/xenia/cpu/xex_module.cc and https://github.com/xenia-project/xenia/blob/master/src/xenia/kernel/util/xex2_info.h
