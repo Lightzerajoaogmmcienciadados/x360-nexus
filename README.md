@@ -17,3 +17,12 @@ NÃO implementa o kernel Xbox 360, descriptografia XEX, GPU Xenos, nem execuçã
 Para APK: envie o conteúdo desta pasta à branch `feature/project-xenon-v4.7` e execute `.github/workflows/android.yml` via GitHub Actions.
 
 Código-fonte fornecido sem APK pré-compilado; não testado em dispositivo neste ambiente.
+
+
+### X360 Nexus v10.4 experimental dual runtime
+
+Play an original homebrew arcade game in the Rust Nexus Core without Xenia, or use the bundled Xenia Mali engine for supported Xbox 360 games. Standalone Nexus Core does not boot commercial ISO/XEX. Includes local Xbox player profiles, game visual presets, Mali adjustments and optional screen-refresh requests for Nexus UI.
+
+Earlier user-shared X360 Nexus library screenshot (visual reference): [Nexus UI](android/app/src/main/assets/images/x360-nexus-anterior.jpg).
+
+Build with .github/workflows/x360-xenia-integrated-v104.yml.

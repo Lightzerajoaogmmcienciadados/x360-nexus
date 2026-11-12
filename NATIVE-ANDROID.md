@@ -184,3 +184,18 @@ No game files, Xbox system keys or retail games are included.
 - The user may open the bundled XenDroid UI to manage Xbox 360 player profiles.
 - NOTE: Performance improvements are not guaranteed; emulation may remain
   slow due to CPU JIT, shaders, Mali Vulkan drivers or memory pressure.
+
+
+## v10.4 — Dual runtime and display controls
+
+- Nexus Core (no Xenia) runs Nexus Paddle, an ORIGINAL Rust arcade game with touch and Bluetooth/USB gamepad support.
+- A bounded raw PowerPC .ppcbin executor runs small homebrew programs (64 KiB / 20,000 guest instructions); it does NOT boot ISO/XEX.
+- The licensed Xenia/XenDroid Mali ARM64/Vulkan engine remains integrated for Xbox 360 titles it supports.
+- Offline player profiles created/listed/activated through XenDroid native functions and ConfigStore (not Xbox Live).
+- Xenia per-game visual profiles remain available with backup/restore; options Performance/Balanced/Quality/Custom 1x-3x.
+- Mali settings add shader caching, geometry shader avoidance, adaptive guest pacing and lower MSAA on performance presets.
+- Screen mode requests 60/90/120 Hz apply only to Nexus UI and native arcade (NOT to XenDroid EmulatorHost Activity); unsupported rates disabled.
+- Experimental Xenia per-title GPU framerate_limit 0/30/60/90/120 does NOT unlock internal game FPS.
+- Previous user-provided X360 Nexus library screenshot reused in native home screen as a miniature reference image: android/app/src/main/assets/images/x360-nexus-anterior.jpg.
+- Android All Files Access permission remains user controlled.
+- No complete Xenos GPU hardware/PM4/EDRAM engine or universal commercial Xbox 360 compatibility in Nexus Core.

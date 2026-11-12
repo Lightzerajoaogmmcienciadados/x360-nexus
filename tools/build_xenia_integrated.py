@@ -74,6 +74,16 @@ def integrate(upstream, nexus, decoded, license_file):
         with z.open("lib/arm64-v8a/libx360nexus.so") as data, target_lib.open("wb") as output:
             shutil.copyfileobj(data, output)
 
+        # Preserve a scaled version of the user-supplied previous X360 Nexus
+        # screenshot in the combined APK, without changing its layout.
+        photo = "assets/images/x360-nexus-anterior.jpg"
+        if photo not in nexus_names:
+            raise ValueError("Previous Nexus screenshot not found in app assets")
+        destination = decoded / photo
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with z.open(photo) as image_data, destination.open("wb") as image_out:
+            shutil.copyfileobj(image_data, image_out)
+
     doc = ET.parse(decoded / "AndroidManifest.xml")
     root = doc.getroot()
     package = root.get("package")
@@ -106,9 +116,9 @@ def integrate(upstream, nexus, decoded, license_file):
            for x in application.findall("activity")):
         raise ValueError("Nexus launcher already exists")
 
-    root.set(A + "versionCode", "1003")
-    root.set(A + "versionName", "10.3-xenia-mali-profiles")
-    application.set(A + "label", "X360 Nexus 10.3 • Xenia Mali")
+    root.set(A + "versionCode", "1004")
+    root.set(A + "versionName", "10.4-xenia-mali-dual-core")
+    application.set(A + "label", "X360 Nexus 10.4 • Xenia Mali")
     nexus_activity = ET.SubElement(application, "activity")
     nexus_activity.set(A + "name", "com.x360nexus.MainActivity")
     nexus_activity.set(A + "exported", "true")

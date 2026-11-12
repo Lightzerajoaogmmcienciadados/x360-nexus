@@ -82,7 +82,9 @@ public final class MaliPerformance {
         }
     }
 
-    private static LinkedHashMap<String,LinkedHashMap<String,String>> preset(String mode,int customScale){
+    private static LinkedHashMap<String,LinkedHashMap<String,String>> preset(String mode,int customScale,int fpsCap){
+        if(fpsCap!=0&&fpsCap!=30&&fpsCap!=60&&fpsCap!=90&&fpsCap!=120)
+            throw new IllegalArgumentException("Limite de FPS invalido");
         if(!("performance".equals(mode)||"balanced".equals(mode)
             ||"quality".equals(mode)||"custom".equals(mode)))
             throw new IllegalArgumentException("Perfil desconhecido");
@@ -96,9 +98,12 @@ public final class MaliPerformance {
         // Same 1x Mali performance baseline as XenDroid's source preset.
         gpu.put("draw_resolution_scale_x",Integer.toString(scale));
         gpu.put("draw_resolution_scale_y",Integer.toString(scale));
-        gpu.put("native_2x_msaa","true");
+        gpu.put("native_2x_msaa",effects?"true":"false");
         gpu.put("occlusion_query","\"fake\"");
-        gpu.put("framerate_limit","0");
+        gpu.put("framerate_limit",Integer.toString(fpsCap));
+        gpu.put("guest_display_refresh_cap","true");
+        gpu.put("store_shaders","true");
+        gpu.put("gpu_stall_spin_us","0");
         gpu.put("vulkan_mid_frame_submission_draws","0");
         gpu.put("clear_memory_page_state","false");
         gpu.put("half_pixel_offset","true");
@@ -111,12 +116,18 @@ public final class MaliPerformance {
         vulkan.put("vulkan_resolve_to_texture","true");
         vulkan.put("vulkan_resolve_to_texture_serve","true");
         vulkan.put("vulkan_async_skip_draws","true");
+        vulkan.put("vulkan_avoid_geometry_shaders","true");
+        vulkan.put("vulkan_pipeline_creation_threads","2");
         all.put("Vulkan",vulkan);
 
         LinkedHashMap<String,String> display=new LinkedHashMap<>();
         display.put("postprocess_antialiasing",effects?"\"fxaa\"":"\"none\"");
         display.put("postprocess_scaling_and_sharpening",effects?"\"cas\"":"\"\"");
         all.put("Display",display);
+        LinkedHashMap<String,String> video=new LinkedHashMap<>();
+        video.put("guest_swap_pacing","true");
+        video.put("guest_spin_park_adaptive","true");
+        all.put("Video",video);
         return all;
     }
 
@@ -135,10 +146,13 @@ public final class MaliPerformance {
 
     // Patch only known keys; preserve unrelated config, sections and comments.
     static String merge(String source){
-        return merge(source,"performance",1);
+        return merge(source,"performance",1,0);
     }
     static String merge(String source,String mode,int customScale){
-        LinkedHashMap<String,LinkedHashMap<String,String>> values=preset(mode,customScale);
+        return merge(source,mode,customScale,0);
+    }
+    static String merge(String source,String mode,int customScale,int fpsCap){
+        LinkedHashMap<String,LinkedHashMap<String,String>> values=preset(mode,customScale,fpsCap);
         HashSet<String> seen=new HashSet<>();
         HashSet<String> existingSections=new HashSet<>();
         String current=null;
@@ -181,7 +195,10 @@ public final class MaliPerformance {
         String balanced=merge(input,"balanced",2);
         String quality=merge(input,"quality",2);
         String custom=merge(input,"custom",3);
-        return balanced.contains("draw_resolution_scale_x = 2")
+        String cap=merge(input,"performance",1,120);
+        return cap.contains("framerate_limit = 120")
+            && cap.contains("vulkan_avoid_geometry_shaders = true")
+            && balanced.contains("draw_resolution_scale_x = 2")
             && quality.contains("postprocess_antialiasing = \"fxaa\"")
             && custom.contains("draw_resolution_scale_x = 3")
             && result.contains("user_custom_key = 7")
@@ -195,7 +212,12 @@ public final class MaliPerformance {
         return apply(context,titleId,"performance",1);
     }
     public static synchronized String apply(Context context,String titleId,String preset,int customScale){
+        return apply(context,titleId,preset,customScale,0);
+    }
+    public static synchronized String apply(Context context,String titleId,String preset,int customScale,int fpsCap){
         try{
+            if(fpsCap!=0&&fpsCap!=30&&fpsCap!=60&&fpsCap!=90&&fpsCap!=120)
+                return "Limite de FPS invalido";
             // Fail before modifying any file on an invalid profile or scale.
             if(!("performance".equals(preset)||"balanced".equals(preset)
                 ||"quality".equals(preset)||"custom".equals(preset)))
@@ -214,12 +236,12 @@ public final class MaliPerformance {
                         throw new IOException("Nao foi possivel criar marcador de recuperacao");
                 }
             }
-            String output=merge(read(config),preset,customScale);
+            String output=merge(read(config),preset,customScale,fpsCap);
             if(output.getBytes(StandardCharsets.UTF_8).length>MAX_CONFIG)
                 throw new IOException("Resultado maior que 1 MB");
             atomicWrite(config,output);
             context.getSharedPreferences("x360_xenia_profiles",Context.MODE_PRIVATE).edit()
-                .putString(id(titleId),preset+"|"+customScale).apply();
+                .putString(id(titleId),preset+"|"+customScale+"|"+fpsCap).apply();
             return "Perfil "+preset+" aplicado ao jogo "+id(titleId)+
                 ". O ajuste sera lido na proxima inicializacao do jogo. FPS nao garantido.";
         }catch(Exception ex){
@@ -259,14 +281,28 @@ public final class MaliPerformance {
             .getString(titleId.toUpperCase(Locale.ROOT),"");
         if(raw.isEmpty())return "Original";
         String[] fields=raw.split("\\|");
-        if(fields.length!=2)return "Personalizado";
+        if(fields.length<2)return "Personalizado";
+        String frame=(fields.length>2 && !"0".equals(fields[2]))
+            ?" • limite "+fields[2]+" FPS":"";
         switch(fields[0]){
-            case "performance":return "Desempenho 1x";
-            case "balanced":return "Equilibrado 2x";
-            case "quality":return "Qualidade 2x + FXAA";
-            case "custom":return "Personalizado "+fields[1]+"x";
+            case "performance":return "Desempenho 1x"+frame;
+            case "balanced":return "Equilibrado 2x"+frame;
+            case "quality":return "Qualidade 2x + FXAA"+frame;
+            case "custom":return "Personalizado "+fields[1]+"x"+frame;
             default:return "Personalizado";
         }
+    }
+
+    public static synchronized String setFrameLimit(Context context,String titleId,int fps){
+        if(!validTitleId(titleId))return "Title ID invalido";
+        String v=context.getSharedPreferences("x360_xenia_profiles",Context.MODE_PRIVATE)
+            .getString(titleId.toUpperCase(Locale.ROOT),"performance|1|0");
+        String[] parts=v.split("\\|");
+        String profile=parts.length>0?parts[0]:"performance";
+        int scale=1;
+        if(parts.length>1)try{scale=Integer.parseInt(parts[1]);}
+            catch(NumberFormatException ignored){}
+        return apply(context,titleId,profile,scale,fps);
     }
 
     public static boolean isManaged(Context context,String titleId){

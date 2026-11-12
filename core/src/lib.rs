@@ -11,6 +11,7 @@ pub mod kernel;
 pub mod loader;
 pub mod memory;
 pub mod galaxy;
+pub mod arcade;
 mod galaxy_jni;
 mod native_jni;
 mod compat_lab;

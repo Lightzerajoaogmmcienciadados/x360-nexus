@@ -6,8 +6,8 @@ android {
         applicationId 'com.x360nexus'
         minSdk 26
         targetSdk 35
-        versionCode 1003
-        versionName '10.3-mali-xenia-profiles'
+        versionCode 1004
+        versionName '10.4-nexus-core-xenia-mali'
         ndk { abiFilters 'arm64-v8a' }
     }
     compileOptions {

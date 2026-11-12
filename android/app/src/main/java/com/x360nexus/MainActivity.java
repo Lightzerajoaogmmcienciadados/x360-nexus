@@ -8,6 +8,8 @@ import android.content.Context;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.view.Choreographer;
 import android.widget.ImageView;
 import android.widget.Toast;
 import android.widget.Switch;
@@ -57,6 +59,7 @@ public final class MainActivity extends Activity {
     private static final int PICK_GAME = 360;
     private static final int PICK_COVER = 361;
     private static final int PICK_COVERS = 362;
+    private static final int PICK_NATIVE_PPC = 363;
     private String pendingCoverGameUri;
     private static final int BG = Color.rgb(6,15,11);
     private static final int PANEL = Color.rgb(15,35,25);
@@ -84,6 +87,9 @@ public final class MainActivity extends Activity {
     private native String nativeInspectIso(int fileDescriptor);
     private native String nativeInspectXex(byte[] bytes);
     private native String nativeExecuteRawPpc(byte[] bytes);
+    private native void nativeArcadeReset();
+    private native int[] nativeArcadeFrame(int buttons,int deltaMs);
+    private native String nativeArcadeStatus();
     private native void nativeSetButton(int mask, boolean pressed);
     private native void nativeSetAxis(int axis,int value);
     private native String nativePadStatus();
@@ -99,6 +105,14 @@ public final class MainActivity extends Activity {
     private Thread audioThread;
     private AudioTrack audioTrack;
     private final Object audioGuard = new Object();
+    private boolean arcadeActive=false,arcadeUp=false,arcadeDown=false;
+    private float arcadeAxis=0f;
+    private long arcadeLastNanos=0;
+    private int arcadeFrames=0;
+    private Bitmap arcadeBitmap;
+    private ImageView arcadeImage;
+    private TextView arcadeOutput;
+    private Choreographer.FrameCallback arcadeCallback;
 
     private void vibrate(int durationMs) {
         Haptics.pulse(this,shell,durationMs,false);
@@ -194,6 +208,7 @@ public final class MainActivity extends Activity {
         showTab(0);
     }
     private void showTab(int index) {
+        stopArcade();
         if(surface!=null){surface.onPause();surface=null;}
         tabIndex=index;content.removeAllViews();tabs.removeAllViews();
         for(int i=0;i<TABS.length;i++) {
@@ -216,6 +231,27 @@ public final class MainActivity extends Activity {
     }
     private void home() {
         heading("Projeto Xenon","Interface nativa Android, com código Rust integrado via JNI.");
+        LinearLayout picture=panel("X360 NEXUS — VISUAL ORIGINAL",
+            "Referência visual reutilizada da captura anterior da sua biblioteca, preservando o tema preto e verde.");
+        add(content,picture,12);
+        try(InputStream ref=getAssets().open("images/x360-nexus-anterior.jpg")){
+            Bitmap previous=BitmapFactory.decodeStream(ref);
+            if(previous!=null){
+                ImageView preview=new ImageView(this);
+                preview.setImageBitmap(previous);
+                preview.setAdjustViewBounds(true);
+                preview.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                add(picture,preview,12);
+            }
+        }catch(Exception unavailable){
+            add(picture,text("Tema anterior preservado.",12,MUTED,false),9);
+        }
+        LinearLayout independent=panel("NEXUS CORE — SEM XENIA",
+            "Abra um jogo original jogável feito em Rust. Esta engine NÃO executa ISOs comerciais do Xbox 360.");
+        add(content,independent,14);
+        Button arcade=button("▶ Jogar Nexus Paddle (Rust independente)");
+        add(independent,arcade,12);
+        arcade.setOnClickListener(v->showNativeArcade());
         LinearLayout banner=panel("MOTOR NATIVO  •  ARM64",
             RUST_AVAILABLE?"Biblioteca Rust carregada":"Biblioteca Rust indisponível");
         add(content,banner,18);
@@ -252,6 +288,23 @@ public final class MainActivity extends Activity {
     }
     private void core() {
         heading("Núcleo Rust / Xenon","Ferramentas executadas localmente no aparelho.");
+        LinearLayout homebrew=panel("EXECUÇÃO DIRETA — NÚCLEO RUST PRÓPRIO",
+            "Motor independente do Xenia: demonstração jogável Nexus Paddle e interpretador PowerPC limitado para programas próprios .ppcbin. Não inicia Minecraft/Forza ISO.");
+        add(content,homebrew,11);
+        Button playNative=button("▶ Executar jogo nativo Rust");
+        add(homebrew,playNative,10);
+        playNative.setOnClickListener(v->showNativeArcade());
+        Button runPpc=outlined("Executar programa PowerPC próprio (.ppcbin)");
+        add(homebrew,runPpc,9);
+        runPpc.setOnClickListener(v->{
+            Intent pick=new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            pick.addCategory(Intent.CATEGORY_OPENABLE);
+            pick.setType("*/*");
+            pick.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivityForResult(pick,PICK_NATIVE_PPC);
+        });
+        add(homebrew,text("Programas PowerPC: código bruto big-endian de até 64 KiB, com até 20 mil instruções. Apenas execução isolada de teste.",12,MUTED,false),7);
+        addRefreshControls(content);
         LinearLayout benchmarkPanel=panel("GPU LAB v10.0 — BENCHMARK NATIVO",
             "Teste 30 quadros com 24 triângulos texturizados por quadro, Z-buffer e estatísticas reais do rasterizador Rust. Não é GPU Xenos real.");
         add(content,benchmarkPanel,12);
@@ -371,7 +424,16 @@ public final class MainActivity extends Activity {
 
     private void library() {
         heading("Biblioteca de jogos",
-            "Capas offline para qualquer jogo de Xbox 360. Selecione uma imagem local por jogo ou importe várias imagens com nomes correspondentes.");
+            "Nexus Core próprio para homebrew experimental e motor Xenia integrado preservado para jogos Xbox 360.");
+        LinearLayout independent=panel("JOGOS DIRETOS — MOTOR X360 NEXUS (SEM XENIA)",
+            "Execute a demonstração Nexus Paddle em Rust sem abrir o Xenia. Para ISOs/XEX comerciais, o motor Rust ainda não tem compatibilidade.");
+        add(content,independent,12);
+        Button direct=button("▶ Iniciar jogo nativo sem Xenia");
+        add(independent,direct,10);
+        direct.setOnClickListener(v->showNativeArcade());
+        Button profiles=outlined("Gerenciar perfis Xbox 360 locais");
+        add(independent,profiles,9);
+        profiles.setOnClickListener(v->showXboxProfiles());
         LinearLayout pick=panel("ISO / XEX / STFS / GOD / XBLA",
             "Seus arquivos permanecem no celular. O núcleo Rust lê metadados; o motor Xenia integrado tenta executar jogos compatíveis.");
         add(content,pick,15);
@@ -647,6 +709,7 @@ public final class MainActivity extends Activity {
             "Equilibrado — 2x, texturas padrão",
             "Qualidade — 2x, FXAA e CAS",
             "Personalizado — escolher resolução",
+            "Limite de FPS Xenia (0 / 30 / 60 / 90 / 120)",
             "Restaurar configurações originais",
             "Abrir gerenciador completo do Xenia"
         };
@@ -659,10 +722,12 @@ public final class MainActivity extends Activity {
                 "\n\nAs alterações são feitas apenas neste jogo e entram em vigor "
                 +"na próxima inicialização. A compatibilidade e o FPS variam.")
             .setItems(choices,(dialog,which)->{
-                if(which==5){
+                if(which==6){
                     ExternalXboxBackend.openProject(this);
-                }else if(which==4){
+                }else if(which==5){
                     runMaliProfile(titleId,null,1);
+                }else if(which==4){
+                    showXeniaFrameLimit(titleId);
                 }else if(which==3){
                     showCustomMaliProfile(gameName,titleId);
                 }else{
@@ -672,6 +737,26 @@ public final class MainActivity extends Activity {
             })
             .setNegativeButton("Cancelar",null)
             .show();
+    }
+
+    private void showXeniaFrameLimit(String titleId){
+        final int[] caps={0,30,60,90,120};
+        final String[] choices={"Sem limite adicional (0 FPS)","30 FPS","60 FPS",
+            "90 FPS experimental","120 FPS experimental"};
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("Limite de FPS do Xenia")
+            .setMessage("Esta configuração é um limite no renderizador Vulkan do Xenia, "
+                +"NÃO força 90/120 FPS nem altera a lógica interna de jogos de 60 FPS. "
+                +"Taxas altas podem piorar desempenho/temperatura no Galaxy A17. "
+                +"Para Minecraft, 30 ou 60 é mais conservador.")
+            .setItems(choices,(d,which)->new Thread(()->{
+                String msg=MaliPerformance.setFrameLimit(this,titleId,caps[which]);
+                runOnUiThread(()->new android.app.AlertDialog.Builder(this)
+                    .setTitle("Limite de FPS")
+                    .setMessage(msg)
+                    .setPositiveButton("OK",null).show());
+            },"xenia-game-fps").start())
+            .setNegativeButton("Cancelar",null).show();
     }
 
     private void showCustomMaliProfile(String gameName,String titleId){
@@ -835,6 +920,13 @@ public final class MainActivity extends Activity {
     }
     private void controllers() {
         heading("Controles","Toque nos botões ou conecte um controle USB/Bluetooth Android.");
+        addRefreshControls(content);
+        LinearLayout profileSection=panel("PERFIS DE JOGADOR (OFFLINE)",
+            "Crie, liste e selecione perfis locais do motor Xenia integrado sem entrar no Xbox Live.");
+        add(content,profileSection,12);
+        Button playerProfiles=button("Gerenciar perfis Xbox 360");
+        add(profileSection,playerProfiles,9);
+        playerProfiles.setOnClickListener(v->showXboxProfiles());
         LinearLayout p=panel("GAMEPAD XINPUT EXPERIMENTAL","A, B, X, Y, D-pad, Start, Back e gatilhos virtuais.");
         add(content,p,14);
         padStatus=text(RUST_AVAILABLE?nativePadStatus():"Núcleo Rust não carregado",13,LIGHT,false);
@@ -924,6 +1016,17 @@ public final class MainActivity extends Activity {
         nativeSetButton(mask,pressed);refreshPad();
     }
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        if(arcadeActive){
+            int key=event.getKeyCode();
+            if(key==KeyEvent.KEYCODE_DPAD_UP||key==KeyEvent.KEYCODE_W){
+                arcadeUp=event.getAction()==KeyEvent.ACTION_DOWN;
+                return true;
+            }
+            if(key==KeyEvent.KEYCODE_DPAD_DOWN||key==KeyEvent.KEYCODE_S){
+                arcadeDown=event.getAction()==KeyEvent.ACTION_DOWN;
+                return true;
+            }
+        }
         int mask=0;
         switch(event.getKeyCode()){
             case KeyEvent.KEYCODE_DPAD_UP:mask=1;break;
@@ -949,6 +1052,7 @@ public final class MainActivity extends Activity {
     @Override public boolean onGenericMotionEvent(MotionEvent event) {
         if(RUST_AVAILABLE && (event.getSource()&InputDevice.SOURCE_JOYSTICK)==InputDevice.SOURCE_JOYSTICK
             && event.getAction()==MotionEvent.ACTION_MOVE){
+            if(arcadeActive){arcadeAxis=event.getAxisValue(MotionEvent.AXIS_Y);}
             nativeSetAxis(0,(int)(event.getAxisValue(MotionEvent.AXIS_X)*32767));
             nativeSetAxis(1,(int)(event.getAxisValue(MotionEvent.AXIS_Y)*32767));
             nativeSetAxis(2,(int)(event.getAxisValue(MotionEvent.AXIS_Z)*32767));
@@ -959,20 +1063,244 @@ public final class MainActivity extends Activity {
         }
         return super.onGenericMotionEvent(event);
     }
+
+    private void addRefreshControls(LinearLayout host){
+        LinearLayout p=panel("TELA — 60 / 90 / 120 Hz",
+            "Selecione um modo que sua tela realmente ofereça. O Android pode recusar a solicitação. Não altera automaticamente o FPS do Xenia.");
+        add(host,p,13);
+        TextView screen=text(DisplayTuning.modesText(this),12,MUTED,false);
+        add(p,screen,10);
+        LinearLayout modes=linear(true);
+        String[] labels={"Auto","60 Hz","90 Hz","120 Hz"};
+        int[] rates={0,60,90,120};
+        for(int i=0;i<rates.length;i++){
+            final int hz=rates[i];
+            Button btn=outlined(labels[i]);
+            btn.setTextSize(11);
+            LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(0,dp(48),1f);
+            params.setMargins(dp(2),0,dp(2),0);
+            modes.addView(btn,params);
+            if(!DisplayTuning.supports(this,hz))btn.setEnabled(false);
+            btn.setOnClickListener(v->{
+                DisplayTuning.save(this,hz);
+                screen.setText(DisplayTuning.modesText(this)+"\n"+DisplayTuning.apply(this));
+            });
+        }
+        add(p,modes,10);
+        add(p,text("90/120 Hz só aparecem habilitados em telas compatíveis. "
+            +"A atividade Xenia/Vulkan controla seu próprio intervalo entre quadros.",12,MUTED,false),9);
+    }
+
+    private void showNativeArcade(){
+        if(!RUST_AVAILABLE){
+            Toast.makeText(this,"Nucleo Rust indisponível",Toast.LENGTH_LONG).show();
+            return;
+        }
+        stopArcade();
+        if(surface!=null){surface.onPause();surface=null;}
+        content.removeAllViews();
+        heading("Nexus Paddle — JOGO NATIVO RUST",
+            "Original, executado pelo X360 Nexus sem Xenia. Use os botões ou D-pad/analógico USB ou Bluetooth.");
+        add(content,text("Motor: Rust ARM64 • Renderizador próprio 320×180 • Sem ISO Xbox 360",12,GREEN,false),10);
+        arcadeImage=new ImageView(this);
+        arcadeImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        arcadeImage.setBackgroundColor(BG);
+        arcadeBitmap=Bitmap.createBitmap(320,180,Bitmap.Config.ARGB_8888);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(235));
+        lp.topMargin=dp(14);
+        content.addView(arcadeImage,lp);
+        arcadeOutput=text("O jogo está iniciando...",12,LIGHT,false);
+        add(content,arcadeOutput,10);
+        LinearLayout row=linear(true);
+        Button up=button("↑ CIMA");
+        Button down=button("↓ BAIXO");
+        LinearLayout.LayoutParams half=new LinearLayout.LayoutParams(0,dp(68),1f);
+        half.setMargins(dp(3),0,dp(3),0);
+        row.addView(up,half);
+        LinearLayout.LayoutParams halfTwo=new LinearLayout.LayoutParams(0,dp(68),1f);
+        halfTwo.setMargins(dp(3),0,dp(3),0);
+        row.addView(down,halfTwo);
+        up.setOnTouchListener((v,e)->{
+            if(e.getActionMasked()==MotionEvent.ACTION_DOWN){
+                arcadeUp=true;Haptics.pulse(this,v,40,false);
+            }else if(e.getActionMasked()==MotionEvent.ACTION_UP||
+                e.getActionMasked()==MotionEvent.ACTION_CANCEL)arcadeUp=false;
+            return true;
+        });
+        down.setOnTouchListener((v,e)->{
+            if(e.getActionMasked()==MotionEvent.ACTION_DOWN){
+                arcadeDown=true;Haptics.pulse(this,v,40,false);
+            }else if(e.getActionMasked()==MotionEvent.ACTION_UP||
+                e.getActionMasked()==MotionEvent.ACTION_CANCEL)arcadeDown=false;
+            return true;
+        });
+        add(content,row,12);
+        Button reset=outlined("Reiniciar partida");
+        add(content,reset,10);
+        reset.setOnClickListener(v->{nativeArcadeReset();arcadeLastNanos=0;});
+        Button back=outlined("Voltar à biblioteca");
+        add(content,back,9);
+        back.setOnClickListener(v->showTab(1));
+        nativeArcadeReset();
+        arcadeActive=true;
+        arcadeFrames=0;
+        arcadeLastNanos=0;
+        arcadeCallback=new Choreographer.FrameCallback(){
+            @Override public void doFrame(long frameTimeNanos){
+                if(!arcadeActive)return;
+                long elapsed=arcadeLastNanos==0?16:
+                    Math.max(0,Math.min(50,(frameTimeNanos-arcadeLastNanos)/1000000L));
+                arcadeLastNanos=frameTimeNanos;
+                int mask=(arcadeUp||arcadeAxis<-0.25f?1:0)|
+                    (arcadeDown||arcadeAxis>0.25f?2:0);
+                try{
+                    int[] frame=nativeArcadeFrame(mask,(int)elapsed);
+                    if(frame!=null&&frame.length==320*180){
+                        arcadeBitmap.setPixels(frame,0,320,0,0,320,180);
+                        arcadeImage.setImageBitmap(arcadeBitmap);
+                    }
+                    if(++arcadeFrames%30==0)arcadeOutput.setText(nativeArcadeStatus());
+                }catch(Throwable err){
+                    arcadeActive=false;
+                    arcadeOutput.setText("Erro no jogo nativo: "+err.getMessage());
+                    return;
+                }
+                Choreographer.getInstance().postFrameCallback(this);
+            }
+        };
+        Choreographer.getInstance().postFrameCallback(arcadeCallback);
+    }
+    private void stopArcade(){
+        arcadeActive=false;
+        arcadeUp=false;
+        arcadeDown=false;
+        arcadeAxis=0.0f;
+        if(arcadeCallback!=null){
+            Choreographer.getInstance().removeFrameCallback(arcadeCallback);
+            arcadeCallback=null;
+        }
+        arcadeImage=null;
+        arcadeBitmap=null;
+        arcadeOutput=null;
+    }
+
+    private void executeSelectedPpc(Uri uri){
+        new Thread(()->{
+            String report;
+            try(InputStream in=getContentResolver().openInputStream(uri)){
+                if(in==null)throw new IOException("Arquivo não encontrado");
+                ByteArrayOutputStream buffer=new ByteArrayOutputStream();
+                byte[] chunk=new byte[4096];
+                int n;
+                while((n=in.read(chunk))!=-1){
+                    if(buffer.size()+n>65536)throw new IOException("Programa excede 64 KiB");
+                    buffer.write(chunk,0,n);
+                }
+                if(!RUST_AVAILABLE)throw new IOException("Biblioteca Rust ausente");
+                report=nativeExecuteRawPpc(buffer.toByteArray());
+            }catch(Throwable err){
+                report="Falha no interpretador PowerPC: "+err.getMessage();
+            }
+            final String msg=report;
+            runOnUiThread(()->new android.app.AlertDialog.Builder(this)
+                .setTitle("Nexus Core — PowerPC")
+                .setMessage(msg)
+                .setPositiveButton("OK",null).show());
+        },"nexus-raw-ppc").start();
+    }
+
+    private void showXboxProfiles(){
+        if(!ExternalXboxBackend.isIntegrated(this)){
+            Toast.makeText(this,"Perfis reais precisam do Xenia integrado",Toast.LENGTH_LONG).show();
+            return;
+        }
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("Perfis Xbox 360 — Xenia integrado")
+            .setMessage("Gerencie contas locais offline. O perfil selecionado é usado na próxima inicialização do Minecraft e outros jogos. Não é login Xbox Live.")
+            .setItems(new String[]{"Criar perfil local","Listar e selecionar perfil","Abrir interface completa Xenia"},
+                (dialog,index)->{
+                    if(index==0)createXboxProfile();
+                    else if(index==1)listXboxProfiles();
+                    else ExternalXboxBackend.openProject(this);
+                }).setNegativeButton("Fechar",null).show();
+    }
+    private void createXboxProfile(){
+        EditText gamer=new EditText(this);
+        gamer.setSingleLine(true);
+        gamer.setHint("Gamertag (1 a 15 caracteres)");
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("Criar perfil Xbox 360 local")
+            .setView(gamer)
+            .setNegativeButton("Cancelar",null)
+            .setPositiveButton("Criar",(d,which)->{
+                String name=gamer.getText().toString();
+                new Thread(()->{
+                    String result;
+                    try{result=XboxProfiles.create(this,name);}
+                    catch(Exception err){result="Falha ao criar perfil: "+XboxProfiles.error(err);}
+                    final String done=result;
+                    runOnUiThread(()->new android.app.AlertDialog.Builder(this)
+                        .setTitle("Perfil de jogador")
+                        .setMessage(done).setPositiveButton("OK",null).show());
+                },"xenia-player-create").start();
+            }).show();
+    }
+    private void listXboxProfiles(){
+        new Thread(()->{
+            java.util.List<XboxProfiles.Player> list;
+            try{list=XboxProfiles.list(this);}
+            catch(Exception err){
+                String message="Falha ao listar perfis: "+XboxProfiles.error(err);
+                runOnUiThread(()->new android.app.AlertDialog.Builder(this)
+                    .setTitle("Perfis Xbox 360").setMessage(message)
+                    .setPositiveButton("OK",null).show());
+                return;
+            }
+            runOnUiThread(()->{
+                if(list.isEmpty()){
+                    new android.app.AlertDialog.Builder(this)
+                        .setTitle("Nenhum perfil encontrado")
+                        .setMessage("Crie seu primeiro perfil local para jogar.")
+                        .setPositiveButton("Criar",(d,w)->createXboxProfile())
+                        .setNegativeButton("Fechar",null).show();
+                    return;
+                }
+                String[] labels=new String[list.size()];
+                for(int i=0;i<list.size();i++)labels[i]=list.get(i).toString();
+                new android.app.AlertDialog.Builder(this)
+                    .setTitle("Selecionar perfil Xbox 360")
+                    .setItems(labels,(d,which)->new Thread(()->{
+                        String result;
+                        try{result=XboxProfiles.setActive(this,list.get(which).xuid);}
+                        catch(Exception err){result="Falha ao selecionar: "+XboxProfiles.error(err);}
+                        final String done=result;
+                        runOnUiThread(()->new android.app.AlertDialog.Builder(this)
+                            .setTitle("Perfil de jogador")
+                            .setMessage(done).setPositiveButton("OK",null).show());
+                    },"xenia-player-select").start())
+                    .setNegativeButton("Fechar",null).show();
+            });
+        },"xenia-player-list").start();
+    }
+
     private void about() {
-        heading("Sobre o X360 Nexus","Build Android 10.3 • Xenia Mali + perfis por jogo");
+        heading("Sobre o X360 Nexus","Build Android 10.4 • Nexus Core + Xenia integrado");
         status("ARQUITETURA","Android SDK + OpenGL ES 2.0 + AudioTrack + Rust JNI aarch64.");
-        status("SUPORTE ATUAL","Xenia/XenDroid Mali ARM64 integrado para iniciar jogos; perfis gráficos por Title ID com backup/restauração, biblioteca com capas, controles e vibração; GPU LAB Rust e leitura XEX2/ISO.");
+        status("SUPORTE ATUAL","Dois modos: Nexus Core Rust com jogo original e PowerPC experimental, e Xenia/XenDroid ARM64 integrado para jogos Xbox 360; perfis locais e gráficos, modos de tela 60/90/120Hz e otimizações Mali.");
         status("MOTOR XENIA MALI",ExternalXboxBackend.isIntegrated(this)
             ?"Nucleo Xenia ARM64 integrado ao APK. Execucao de jogos ocorre em processo de emulacao proprio (XenDroid), com Vulkan."
             :"Apenas integracao com motor externo. Instale o emulador XenDroid separadamente.");
         status("LIMITAÇÕES IMPORTANTES",
-            "O Rust diagnostico nao emula jogos Xbox 360. Mesmo com Xenia incorporado, a inicializacao depende da GPU Mali, driver Vulkan, RAM e compatibilidade de cada jogo.");
+            "Nexus Core sem Xenia não executa ISOs/XEX comerciais: somente jogo original Rust e programas PowerPC experimentais. Xenia integrado permanece disponível para os jogos suportados. 90/120Hz são pedidos à tela do Nexus, não garantia de FPS no Xenia.");
         status("PRIVACIDADE","Arquivos escolhidos permanecem no aparelho. A biblioteca guarda URIs locais, nomes, tamanhos e resultados de inspeção.");
     }
     @Override protected void onActivityResult(int request,int result,Intent data){
         super.onActivityResult(request,result,data);
         if(result!=RESULT_OK||data==null)return;
+        if(request==PICK_NATIVE_PPC){
+            if(data.getData()!=null)executeSelectedPpc(data.getData());
+            return;
+        }
         if(request==PICK_COVER||request==PICK_COVERS){
             processCoverPicker(request,data);
             return;
@@ -1107,10 +1435,12 @@ public final class MainActivity extends Activity {
     }
     private void stopSound(){audioPlaying=false;}
     @Override protected void onPause(){
+        stopArcade();
         super.onPause();stopSound();if(surface!=null)surface.onPause();
     }
     @Override protected void onResume(){
         super.onResume();if(surface!=null)surface.onResume();
+        DisplayTuning.apply(this);
         // Re-read the OS grant after returning from Settings. No auto-launch.
         if(tabIndex==1 && ExternalXboxBackend.isIntegrated(this) && content!=null){
             content.post(()->{if(tabIndex==1)showTab(1);});
