@@ -1,33 +1,71 @@
-# X360 Nexus / Project Xenon v4.5 — experimental PPC runtime and GPU-aware Android shell
+# X360: GALAXY — v5.0 (núcleo experimental integrável)
 
-This is a developmental upgrade to v4.4. It **does not run commercial Xbox 360 games**. The Xbox kernel, Xenos command processor, shaders, PPC VMX128, full MMU and real title imports remain unimplemented. Do not interpret successful tests or the presence of Vulkan settings as game compatibility.
+**Importante:** este projeto NÃO executa jogos comerciais do Xbox 360. Uma
+compilação do APK não comprova compatibilidade com Minecraft, Forza etc.
 
-## Changes
+## Auditoria da base v4.5
 
-- Rust PPC64 subset: arithmetic (`addi`, `addis`, `ori`, `oris`, `add`, `or/mr`, `rlwinm`), comparisons (`cmpwi`, `cmplwi`), selected branch conditions (`b`, `bl`, `bc` with CR/CTR, `bclr`, `bcctr`), SPR LR/CTR moves, loads/stores (`lwz`, `lwzu`, `stw`, `stwu`, `lbz`, `stb`, `lhz`, `sth`). All accesses are checked and big-endian.
-- Private HLE **test ABI**, not real xboxkrnl/xam ordinals, implements bounded virtual allocation accounting, TLS, simulated thread record, critical section bookkeeping and synthetic video mode query. Unregistered imports remain errors. A secondary stub can return r3=0 only after explicit registration; it logs that no service was implemented.
-- A bounded Rust runtime on a separate Android worker: reads a PE snapshot of **at most 16 MiB** from the existing v4.4 mapped C++ guest RAM; starts at its actual XEX entry PC, checks section execute ranges, runs in 8,000-instruction chunks (total cap 2 million), measures genuine IPS and pauses on unknown opcode, `sc` without private ABI, out-of-range fetch or stop. Diagnostics show PC, next opcode, CR, LR, CTR and r3-r10.
-- Android dark `activity_main.xml` with selected ISO cards, HUD, start/stop controls, key selection via SAF, preferences, expandable trace.
-- EGL OpenGL ES renderer/version probe on a temporary pbuffer and Android Vulkan feature report. No graphics framebuffer for a real Xbox 360 title is presented. Turnip cannot be loaded automatically and is disabled, and other toggles configure preferences for future backends, not a working shader translator.
+| Subsistema | Situação encontrada | Atualização v5.0 |
+|---|---|---|
+| ISO e XEX2 | XDVDFS no C++; AES-CBC + LZX + PE32 sob limites; chave externa de 16 bytes | Preservados. Não inclui chaves de console ou jogos |
+| RAM e MMU | Staging C++ esparso de 512 MiB, mas runtime Rust limitado a snapshot contíguo de 16 MiB | Permissões de páginas no snapshot; módulo esparso Rust com R/W/X para testes, ainda não conectado à CPU |
+| CPU PowerPC | Interpretador com instruções inteiras e branches; sem FPU e formas indexadas | Acrescenta operações escalares FPU e cargas/lojas indexadas; erros de opcode continuam explícitos |
+| Threads | Modelo só registra ID | Escalonamento cooperativo round-robin de tarefas originais de teste; não são os 6 hardware threads do Xenon |
+| Kernel | HLE via ABI privada; ordinais reais não mapeados | Eventos, alocação de memória física sintética, modos de vídeo e swaps de teste. NtOpenFile/NtReadFile deixam explícita a ausência de handles de filesystem |
+| GPU | Preferências de backend sem renderer nem CP | Analisador PM4 Type 0/2/3 com buffer limitado e EGL/GLES para triângulo diagnóstico na SurfaceView |
+| Controles | Estado de controle Rust por JNI disponível | Overlay A/B/esquerda/direita e eventos de controle físico para o estado experimental; XamInputGetState real ainda não implementado |
 
-## Files edited/created (Rust, C++, Kotlin, XML, CMake/Gradle)
+## Arquitetura
 
-- `core/src/cpu.rs`, `core/src/memory.rs`, `core/src/kernel.rs`, `core/src/runtime.rs` (new), `core/src/lib.rs`
-- `android/app/src/main/cpp/jni_bridge.cpp`, `gpu_settings.cpp` (new), `CMakeLists.txt`
-- `android/app/src/main/java/com/x360nexus/MainActivity.kt`, `GpuDetector.kt` (new)
-- `android/app/src/main/res/layout/activity_main.xml` (new)
-- `android/app/src/main/res/drawable/nexus_card.xml`, `nexus_button.xml` (new)
-- `android/app/src/main/AndroidManifest.xml`, `android/app/build.gradle`
-- `.github/workflows/build-x360-android-apk.yml` updated for v4.5 diagnostics/artifact
+`ISO -> XDVDFS -> default.xex -> XEX2 header -> Session key externa (se exigida) -> AES-CBC -> Basic/LZX -> PE32 -> RAM C++/seções -> snapshot Rust (até 16 MiB) -> CPU PPC interpreter + HLE de teste -> telemetria`.
 
-The C++ reader, XEX AES/LZX and PE mapping from v4.4, and Rust trace from v4.3 are preserved. No console key is included or persisted.
+O pipeline **não é garantido** para todo XEX real: hashes, formatos variantes,
+imports/relocações e comportamento do kernel podem impedir a execução.
+Os bytes PE/XEX são armazenados segundo sua codificação de origem; operações
+PowerPC big-endian são decodificadas explicitamente, e cabeçalhos PE32 são
+little-endian. Não se deve inverter os bytes de um PE inteiro.
 
-## CI
+`CPU Rust -> memória snapshot` e `CPU/C++ -> RAM XDVDFS` **ainda não
+compartilham uma MMU única**; o snapshot é limitado a 16 MiB. O módulo
+`core/src/mmu.rs` valida um espaço virtual esparso 512 MiB, mas ainda não
+substitui a memória de execução do CPU.
 
-- `cargo test --manifest-path core/Cargo.toml`
-- `cmake -S . -B build/xdvdfs-host && cmake --build build/xdvdfs-host && ctest --test-dir build/xdvdfs-host --output-on-failure`
-- Android ARM64 Gradle APK by `.github/workflows/build-x360-android-apk.yml` (SDK 35, NDK 27, Java 17, Kotlin 2.0.21).
+`Memória C++ -> nativeProcessPm4(address, words) -> RingBuffer FIFO limitado ->
+Type0 / Type2 / Type3 (SET_CONSTANT, REG_RMW, DRAW_INDX)`.
+**Ainda não há interceptação automática de MMIO/DMA do jogo**, nem tradução de
+shader Xenos. PM4_DRAW_INDX é detectado e marcado como **não implementado**.
 
-## Important constraints
+`SurfaceView -> videoWorker -> ANativeWindow -> EGL OpenGL ES 3 -> glClear /
+triângulo sintético -> eglSwapBuffers`. A superfície mostra um teste com shader
+GLSL próprio, **não a saída de um jogo**. Vulkan permanece seleção não implementada,
+e Turnip não está incluído ou carregado. FPS reportado refere-se somente aos
+quadros de demonstração.
 
-The app displays **FPS: N/D** until actual graphics are being rendered. Only measured **IPS** reflects guest interpreter steps. Vulkan device capabilities are reported by Android; backend setting is a *request*, not evidence of active Vulkan/Xenos rendering. A 16 MiB PE window limit and 2-million-step execution cap protect the device. The process does not have an Xbox kernel or genuine import resolver. For educational tests, the `sc` private ABI uses r0 = `0x58450000 + service_id` (1..10); this is *not* the real Xbox ABI.
+## Testes
+
+C++ host:
+```
+cmake -S . -B build/host -DCMAKE_BUILD_TYPE=Release
+cmake --build build/host
+ctest --test-dir build/host --output-on-failure
+```
+
+Rust: `cargo test --manifest-path core/Cargo.toml`.
+
+Android: executar `.github/workflows/build-x360-android-apk.yml` no GitHub
+Actions. Compila C++ JNI, Rust JNI e Kotlin. O APK fica no artifact
+**X360-Nexus-v5.0-Android-ARM64-Debug-APK**.
+
+## Modificações desta versão
+
+- Rust: `cpu.rs`, `memory.rs`, `kernel.rs`, `runtime.rs`, `scheduler.rs` (novo),
+  `mmu.rs` (novo), `lib.rs`, `Cargo.toml`.
+- C++: `xenos_pm4.{hpp,cpp}` (novos), `xenos_video.{hpp,cpp}` (novos),
+  `gpu_pm4_jni.cpp` (novo), `jni_bridge.cpp`, `gpu_settings.cpp`, `CMakeLists.txt`.
+- Kotlin/XML: `MainActivity.kt`, `activity_main.xml`, `AndroidManifest.xml`,
+  `android/app/build.gradle`.
+- Testes: `tests/pm4_tests.cpp`, `CMakeLists.txt` na raiz; workflow atualizado.
+
+Limitações: sem CPU Xenon completa/VMX128/JIT, 6 hardware threads, imports
+`xboxkrnl.exe`/`xam.xex` reais, memória partilhada plena, GPU Xenos ou
+renderização de jogos. Chaves de console não são armazenadas nem distribuídas.
