@@ -2,7 +2,7 @@ name: X360 Nexus v10.5 - Xenia Mali game execution and performance
 on:
   push:
     branches:
-      - feature/x360-nexus-xenia-integrated-v10.5
+      - feature/x360-nexus-voxel-mobile-v10.5
     paths:
       - 'android/**'
       - 'core/**'
