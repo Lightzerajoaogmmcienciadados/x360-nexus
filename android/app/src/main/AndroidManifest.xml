@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.VIBRATE"/>
+    <!-- Package visibility for explicitly installed XenDroid backend. -->
+    <queries>
+        <package android:name="xendroid.compose" />
+    </queries>
     <uses-feature android:glEsVersion="0x00020000" android:required="true"/>
     <uses-feature android:name="android.hardware.gamepad" android:required="false"/>
     <application android:label="X360 Nexus Native" android:icon="@drawable/galaxy_icon"

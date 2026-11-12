@@ -1,4 +1,4 @@
-# X360 Nexus — Native Android Experimental (6.6)
+# X360 Nexus — Native Android Experimental (10.0)
 
 Native Android APK: Java/Android SDK, OpenGL ES 2, Android AudioTrack and Rust JNI (ARM64-v8a).
 
@@ -104,3 +104,31 @@ Xenos register/packet/shader emulation, and XMA audio decoding.
 - Benchmark runs off the Android UI thread to avoid blocking input and rendering.
 - Keeps the Android haptic vibration fix, game cover library, ISO/XEX metadata, CPU subset, PCM and gamepad support.
 - NOT compatible with commercial Xbox 360 games: real Xenon JIT/MMU, Xbox kernel APIs, Xenos shader/packet translation and XMA are still missing.
+
+
+## v10.0 - Real-game launch through installed XenDroid Mali
+
+The X360 Nexus v10.0 APK remains a native Android/Rust companion.
+**It does not bundle or embed Xenia's C++ emulator**. Instead, it integrates
+an explicitly installed Android Xbox 360 emulator from the independent XenDroid
+Mali/Xenia family. The launch bridge is in ExternalXboxBackend.java.
+
+Upstream XenDroid Mali: https://github.com/DEGROUCHO/xendroid-mali
+Source of the exported Android activity and game URI contract:
+https://github.com/DEGROUCHO/xendroid-mali/blob/main/src/xendroid-src/app/src/main/AndroidManifest.xml
+https://github.com/DEGROUCHO/xendroid-mali/blob/main/src/xendroid-src/app/src/main/java/xendroid/compose/core/FrontendLaunch.kt
+License: https://github.com/DEGROUCHO/xendroid-mali/blob/main/LICENSE
+
+Installation: Install XenDroid Mali separately, then open X360 Nexus Library,
+select your own legally obtained ISO/XEX, and tap 'Jogar via XenDroid Mali'.
+The app dispatches xendroid.intent.action.xendroid to package xendroid.compose,
+exported EmulatorHostActivity, with game_uri and an Android SAF read-only grant.
+XenDroid, not X360 Nexus Rust, performs ARM64 JIT, emulated Xbox kernel, XMA and
+Vulkan-based GPU work.
+
+Limits: The upstream fork mainly reports results on a Mali-G720 device.
+Lower-end Mali phones such as Galaxy A17 are not validated. Vulkan availability,
+Android provider permissions, ARM64 memory, shaders and performance may prevent
+games from booting. No retail game compatibility is guaranteed, and this app's
+internal Xenon CPU/Xenos GPU are still limited diagnostic implementations.
+No game files, Xbox system keys or retail games are included.

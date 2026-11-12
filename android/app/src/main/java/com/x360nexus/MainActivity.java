@@ -233,6 +233,13 @@ public final class MainActivity extends Activity {
             if(!RUST_AVAILABLE){output.setText("Erro: biblioteca nativa ausente.");return;}
             try{output.setText(nativeRunDemo());}catch(Throwable e){output.setText("Erro JNI: "+e);}
         });
+        LinearLayout emulator=panel("XBOX 360 REAL — MOTOR XENDROID MALI",
+            "Integração com emulador Xenia/XenDroid instalado separadamente. O X360 Nexus encaminha a ISO, mas NÃO executa o jogo com seu próprio núcleo.");
+        add(content,emulator,18);
+        add(emulator,text(ExternalXboxBackend.diagnostic(this),12,LIGHT,false),10);
+        Button emulatorSite=outlined("Instalar motor XenDroid Mali");
+        add(emulator,emulatorSite,11);
+        emulatorSite.setOnClickListener(v->ExternalXboxBackend.openProject(this));
         Button go=outlined("Abrir biblioteca de jogos");add(content,go,18);
         go.setOnClickListener(v->showTab(1));
     }
@@ -363,6 +370,17 @@ public final class MainActivity extends Activity {
         add(content,pick,15);
         Button importGame=button("+ Adicionar jogo ou arquivo");
         add(pick,importGame,12);
+        LinearLayout xboxBackend=panel("EXECUÇÃO DE JOGOS — BACKEND XENIA",
+            "Para executar ISO/XEX: instale o XenDroid Mali separadamente. O X360 Nexus compartilha seu arquivo por acesso temporário de leitura; a execução acontece no outro aplicativo.");
+        add(content,xboxBackend,13);
+        TextView backendState=text(ExternalXboxBackend.diagnostic(this),12,LIGHT,false);
+        add(xboxBackend,backendState,9);
+        Button installBackend=outlined("Obter XenDroid Mali no GitHub");
+        add(xboxBackend,installBackend,9);
+        installBackend.setOnClickListener(v->ExternalXboxBackend.openProject(this));
+        Button checkBackend=outlined("Verificar se está instalado");
+        add(xboxBackend,checkBackend,8);
+        checkBackend.setOnClickListener(v->backendState.setText(ExternalXboxBackend.diagnostic(this)));
         importGame.setOnClickListener(v->{
             Intent open=new Intent(Intent.ACTION_OPEN_DOCUMENT);
             open.addCategory(Intent.CATEGORY_OPENABLE);
@@ -469,6 +487,14 @@ public final class MainActivity extends Activity {
             Button choose=outlined(cachedCover==null?"Adicionar capa":"Trocar capa");
             add(card,choose,13);
             choose.setOnClickListener(v->chooseCoverForGame(uri));
+            if(ExternalXboxBackend.supportsFile(name)){
+                Button play=button("▶ Jogar via XenDroid Mali");
+                add(card,play,11);
+                play.setOnClickListener(v->{
+                    String result=ExternalXboxBackend.play(this,Uri.parse(uri));
+                    Toast.makeText(this,result,Toast.LENGTH_LONG).show();
+                });
+            }
             Button favorite=outlined(item.optBoolean("favorite",false)
                 ?"★ Favorito — desmarcar":"☆ Adicionar aos favoritos");
             add(card,favorite,10);
@@ -786,7 +812,8 @@ public final class MainActivity extends Activity {
         heading("Sobre o X360 Nexus","Build Android 10.0 • Experimental nativo");
         status("ARQUITETURA","Android SDK + OpenGL ES 2.0 + AudioTrack + Rust JNI aarch64.");
         status("SUPORTE ATUAL","GPU LAB v10.0 com benchmark nativo assíncrono e estatísticas, leitura ISO/XEX2/CON/LIVE/PIRS, CPU PowerPC parcial, mixer PCM, controles, capas e vibração Android.");
-        status("LIMITAÇÕES IMPORTANTES","Sem JIT PPC, MMU Xbox completa, APIs XAM/Xbox Kernel, decodificador XMA, tradutor Xenos, renderização 360 e execução de jogos comerciais.");
+        status("EXECUÇÃO COM BACKEND EXTERNO","XenDroid Mali/Xenia ARM64, se instalado: recebe ISO/XEX da biblioteca do X360 Nexus e tenta executar o jogo em seu próprio processo, com driver Vulkan.");
+        status("LIMITAÇÕES IMPORTANTES","O núcleo Rust interno ainda não roda jogos comerciais de Xbox 360. O resultado no emulador externo depende do jogo, CPU ARM64, GPU Mali e drivers.");
         status("PRIVACIDADE","Arquivos escolhidos permanecem no aparelho. A biblioteca guarda URIs locais, nomes, tamanhos e resultados de inspeção.");
     }
     @Override protected void onActivityResult(int request,int result,Intent data){

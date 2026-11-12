@@ -1,4 +1,4 @@
-name: X360 Nexus Native Android 10.0 - Rust ARM64
+name: X360 Nexus Native Android 10.0 - Mali Xenia launcher
 on:
   push:
     branches:
@@ -6,7 +6,7 @@ on:
     paths:
       - 'android/**'
       - 'core/**'
-      - '.github/workflows/x360-native-android-v100.yml'
+      - '.github/workflows/x360-native-android-v10.yml'
   workflow_dispatch:
 
 permissions:
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   native-apk:
-    name: Build native v10.0 APK, test CPU, kernel, audio, formats and GPU benchmark
+    name: Build native X360 Nexus 10.0 Mali launcher APK
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
@@ -79,7 +79,7 @@ jobs:
       - name: APK para download
         uses: actions/upload-artifact@v4
         with:
-          name: X360-Nexus-Native-v10.0-Rust-Android-APK
+          name: X360-Nexus-v10.0-Xenia-Mali-Launcher-Android-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 90
