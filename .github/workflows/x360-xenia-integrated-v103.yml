@@ -29,10 +29,10 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Gradle 8.10.3
+      - name: Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.10.3'
+          gradle-version: '8.10.2'
 
       - name: Rust Android ARM64
         uses: dtolnay/rust-toolchain@stable
