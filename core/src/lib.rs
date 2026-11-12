@@ -14,6 +14,7 @@ pub mod galaxy;
 mod galaxy_jni;
 mod native_jni;
 mod compat_lab;
+mod gpu_benchmark;
 use audio::Audio;
 use cpu::Cpu;
 use gpu::Gpu;
