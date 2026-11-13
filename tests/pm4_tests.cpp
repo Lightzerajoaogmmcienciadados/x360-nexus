@@ -18,10 +18,15 @@ int main(){
     assert(p.submit(partial,err));assert(p.stats().packets==2);
     const std::array<uint32_t,1> rest{123u};assert(p.submit(rest,err));
     assert(p.register_value(0x2000,value)&&value==123u);
+    const std::array<uint32_t,3> clear_test{type3(0x55,2),0xC000u,0x005522FFu};
+    assert(p.submit(clear_test,err));
+    assert(p.diagnostic_clear_color(value) && value==0x005522FFu);
+    const std::array<uint32_t,2> event_write{type3(0x46,1),0x00000007u};
+    assert(p.submit(event_write,err));assert(p.stats().event_writes==1);
     const std::array<uint32_t,3> draw{type3(0x22,2),1,2};assert(p.submit(draw,err));
     assert(p.stats().draws_seen==1 && p.stats().unsupported==1);
     const std::array<uint32_t,1> nop{2u<<30};assert(p.submit(nop,err));
     std::vector<uint32_t> too_long(CommandProcessor::kMaxQueuedWords+1);
     assert(!p.submit(too_long,err));
-    std::cout<<"PM4 packet0/2/3, ring fragment, unsupported draw: PASS\n";
+    std::cout<<"PM4 packet0/2/3, event telemetry, diagnostic color, unsupported draw: PASS\n";
 }

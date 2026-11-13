@@ -26,7 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** v4.5 UI and diagnostic execution; no actual commercial Xbox 360 game support. */
+/** v5.1 Android UI, sparse guest RAM session and diagnostic GLES PM4 processing. */
 class MainActivity : Activity() {
     companion object {
         private const val PICK_ISO=100
@@ -47,7 +47,12 @@ class MainActivity : Activity() {
     private external fun nativePrepareStagedXex():String
     private external fun nativePreparedInfo():LongArray?
     private external fun nativeExecutableRanges():LongArray?
-    private external fun nativePreparedSnapshot():ByteArray?
+    private external fun nativePreparedSnapshot():ByteArray? // legacy diagnostic only
+    private external fun nativePreparedChunk(address:Long,length:Int):ByteArray?
+    private external fun nativeStartSessionPaged(base:Long,entry:Long,size:Int,ranges:LongArray):String
+    private external fun nativeUploadSessionChunk(address:Long,data:ByteArray):String
+    private external fun nativeLaunchSession():String
+    private external fun nativePollSession():String
     private external fun nativeSetXexKey(bytes:ByteArray):String
     private external fun nativeClearXexKey():String
     private external fun nativeStartSession(image:ByteArray,base:Long,entry:Long,ranges:LongArray):String
@@ -197,6 +202,7 @@ class MainActivity : Activity() {
         restoreSettings();readStoredGames();renderGames()
         setupVideo()
         setupPad()
+        applySafeInsets()
         findViewById<Button>(R.id.pm4Demo).setOnClickListener {
             if(NATIVE_READY)log(nativeSubmitDemoPm4()) else log("PM4 JNI indisponivel")
         }
@@ -219,7 +225,7 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.consoleToggle).setOnClickListener {
             console.visibility=if(console.visibility==View.VISIBLE)View.GONE else View.VISIBLE
         }
-        log("v5.0: Rust JNI=${RUST_READY}, C++ JNI=${NATIVE_READY}. Execução limitada a snapshot de PE32.")
+        log("v5.1: Rust JNI=${RUST_READY}, C++ JNI=${NATIVE_READY}. CPU nativa + memória esparsa. Kernel e GPU Xenos ainda parciais.")
         worker.execute {
             val info=GpuDetector.query(this)
             currentGpu="${info.family}\n${info.renderer}\nOpenGL ES: ${info.version}\nVulkan: ${info.vulkan}"
@@ -242,25 +248,39 @@ class MainActivity : Activity() {
                 uiLog(preparation)
                 val info=nativePreparedInfo()?:throw IllegalStateException("PE não preparado: verifique AES/LZX e imports")
                 val ranges=nativeExecutableRanges()?:throw IllegalStateException("Secoes executaveis inválidas")
-                val snapshot=nativePreparedSnapshot()?:throw IllegalStateException("Imagem maior que 16 MiB ou RAM indisponível para o teste")
-                val start=try{nativeStartSession(snapshot,info[0],info[1],ranges)}finally{snapshot.fill(0)}
+                // Transfer the prepared PE in 64-KiB blocks. Sparse RAM is owned
+                // by the Rust CPU; Java never holds the whole PE as a byte array.
+                val size=info[2].toInt()
+                if(size<=0 || size>128*1024*1024)throw IllegalStateException("PE excede limite de seguranca (128 MiB)")
+                val start=nativeStartSessionPaged(info[0],info[1],size,ranges)
                 uiLog(start)
                 if(!start.startsWith("OK|"))return@execute
-                var lastHud=0L
-                var lastReport=""
+                var sent=0
+                while(sent<size && continueRunning.get()){
+                    val count=minOf(65536,size-sent)
+                    val address=info[0]+sent
+                    val bytes=nativePreparedChunk(address,count)
+                        ?:throw IllegalStateException("Falha transferindo PE @0x${address.toString(16)}")
+                    val msg=try{nativeUploadSessionChunk(address,bytes)}finally{bytes.fill(0)}
+                    if(!msg.startsWith("OK|"))throw IllegalStateException(msg)
+                    sent+=count
+                    if(sent%(4*1024*1024)==0)uiLog("PE transferido: ${sent/1024/1024} MiB / ${size/1024/1024} MiB")
+                }
+                if(!continueRunning.get())return@execute
+                val launched=nativeLaunchSession()
+                uiLog(launched)
+                if(!launched.startsWith("OK|"))return@execute
+                var last=""
                 while(continueRunning.get()){
-                    lastReport=nativeRunSessionChunk(8000)
-                    val now=SystemClock.uptimeMillis()
-                    if(now-lastHud>=350 || !lastReport.startsWith("RUNNING|")){
-                        val payload=lastReport
-                        runOnUiThread {
-                            val ips=Regex("IPS=([0-9]+)").find(payload)?.groupValues?.get(1)?:"0"
-                            telemetry.text="RAM snapshot: ${info[2]/1024/1024} MiB | IPS: $ips | GPU: demo GLES (nao Xenos)"
-                            log(payload)
-                        }
-                        lastHud=now
+                    Thread.sleep(350)
+                    last=nativePollSession()
+                    val status=last
+                    runOnUiThread {
+                        val ips=Regex("IPS=([0-9]+)").find(status)?.groupValues?.get(1)?:"0"
+                        telemetry.text="RAM virtual: 512 MiB (esparsa) | PE: ${size/1024/1024} MiB | IPS: $ips | GPU: GLES diagnostico"
+                        log(status)
                     }
-                    if(!lastReport.startsWith("RUNNING|"))break
+                    if(!last.startsWith("RUNNING|"))break
                 }
                 if(!continueRunning.get())uiLog(nativeStopSession())
             }catch(e:Throwable){uiLog("PARADA: ${e.message}")}
@@ -303,6 +323,16 @@ class MainActivity : Activity() {
             }
         }
     }
+    /** Android 15 edge-to-edge: keep HUD and buttons below the system clock. */
+    private fun applySafeInsets(){
+        val root=findViewById<android.widget.ScrollView>(R.id.rootScroll)
+        root.setOnApplyWindowInsetsListener {view,insets ->
+            view.setPadding(view.paddingLeft,insets.systemWindowInsetTop,
+                view.paddingRight,insets.systemWindowInsetBottom)
+            insets
+        }
+        root.requestApplyInsets()
+    }
     private fun setupVideo(){
         val surface=findViewById<SurfaceView>(R.id.videoSurface)
         surface.holder.addCallback(object:SurfaceHolder.Callback {
@@ -332,6 +362,18 @@ class MainActivity : Activity() {
         }
     }
     private fun setupPad(){
+        val left=findViewById<AnalogPad>(R.id.leftStick)
+        val right=findViewById<AnalogPad>(R.id.rightStick)
+        left.onAxis={x,y->if(RUST_READY){nativeSetAxis(0,x);nativeSetAxis(1,y)}}
+        right.onAxis={x,y->if(RUST_READY){nativeSetAxis(2,x);nativeSetAxis(3,y)}}
+        touchButton(R.id.padLB,0x0100)
+        touchButton(R.id.padRB,0x0200)
+        touchButton(R.id.padStart,0x0010)
+        touchButton(R.id.padBack,0x0020)
+        touchButton(R.id.padX,0x4000)
+        touchButton(R.id.padY,0x8000)
+        touchButton(R.id.padUp,0x0001)
+        touchButton(R.id.padDown,0x0002)
         touchButton(R.id.padA,0x1000)
         touchButton(R.id.padB,0x2000)
         touchButton(R.id.padLeft,0x0004)
@@ -371,6 +413,7 @@ class MainActivity : Activity() {
         videoActive=false
         videoHandler.removeCallbacks(videoTick)
         continueRunning.set(false)
+        if(RUST_READY)nativeStopSession()
         worker.shutdownNow()
         videoWorker.execute {if(NATIVE_READY)nativeSetVideoSurface(null)}
         videoWorker.shutdown()

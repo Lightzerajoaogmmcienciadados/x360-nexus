@@ -36,18 +36,20 @@ impl Kernel {
             1 => { // NtAllocateVirtualMemory(base_ptr=r3, size_ptr=r4)
                 let size=mem.read_u32_be(gpr[4] as usize).map_err(str::to_string)? as usize;
                 if size==0 || size>16*1024*1024{return Err("allocation size invalid".into());}
-                if self.next_heap==0 { self.next_heap=(mem.base()+0x10000+4095)&!4095; }
+                if self.next_heap==0 { self.next_heap=(mem.base()+if mem.is_sparse(){128*1024*1024}else{0x10000}+4095)&!4095; }
                 let start=(self.next_heap+4095)&!4095;
                 let rounded=(size as u64+4095)&!4095;
                 if start.checked_add(rounded).is_none_or(|end|end>mem.base()+mem.len() as u64){return Err("out of guest memory".into());}
                 self.next_heap=start+rounded;
+                mem.set_page_permissions(start,rounded as usize,Memory::READ|Memory::WRITE).map_err(str::to_string)?;
                 mem.write_u32_be(a,start as u32).map_err(str::to_string)?;
                 self.allocations.insert(start,size);
                 "NtAllocateVirtualMemory"
             },
             2 => { // NtFreeVirtualMemory: removes allocation tracking only
                 let addr=mem.read_u32_be(a).map_err(str::to_string)? as u64;
-                if self.allocations.remove(&addr).is_none(){return Err("unknown virtual allocation".into());}
+                let bytes=self.allocations.remove(&addr).ok_or("unknown virtual allocation")?;
+                mem.unmap_region(addr,(bytes+4095)&!4095).map_err(str::to_string)?;
                 "NtFreeVirtualMemory"
             },
             3 => {let slot=self.next_tls;self.next_tls=self.next_tls.saturating_add(1);self.tls.insert(slot,0);gpr[3]=slot as u64;return Ok(format!("KeTlsAlloc -> {slot}"));},
@@ -68,11 +70,12 @@ impl Kernel {
             14=>{ // MmAllocatePhysicalMemory (synthetic): returns offset inside snapshot.
                 let size=(gpr[3] as usize).max(1);
                 if size>1024*1024{return Err("physical allocation exceeds diagnostic limit".into());}
-                if self.next_heap==0{self.next_heap=(mem.base()+0x10000+4095)&!4095;}
+                if self.next_heap==0{self.next_heap=(mem.base()+if mem.is_sparse(){128*1024*1024}else{0x10000}+4095)&!4095;}
                 let start=(self.next_heap+4095)&!4095;
                 let end=start.checked_add(((size as u64)+4095)&!4095).ok_or("out of memory")?;
                 if end>mem.base()+mem.len() as u64{return Err("out of guest memory".into());}
                 self.next_heap=end;self.allocations.insert(start,size);
+                mem.set_page_permissions(start,((size+4095)&!4095),Memory::READ|Memory::WRITE).map_err(str::to_string)?;
                 gpr[3]=start;return Ok(format!("MmAllocatePhysicalMemory test -> 0x{start:X}"));
             },
             15=>{ // VdSwap: only counts submitted frames, no real Xenos content.

@@ -1,4 +1,4 @@
-//! Project Xenon 4.3 Galaxy: diagnostic PPC & XEX2 loader; not a commercial game emulator.
+//! X360 GALAXY v5.1: diagnostic PPC & XEX2 loader; not a commercial game emulator.
 pub mod audio;
 pub mod cpu;
 pub mod gpu;

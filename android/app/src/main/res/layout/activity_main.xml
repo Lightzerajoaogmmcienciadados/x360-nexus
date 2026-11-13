@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView android:id="@+id/rootScroll" xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent" android:layout_height="match_parent"
-    android:fillViewport="true" android:background="#0D0E12">
+    android:fitsSystemWindows="true" android:clipToPadding="false" android:fillViewport="true" android:background="#0D0E12">
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="vertical" android:padding="16dp">
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:text="X360 NEXUS" android:textSize="30sp" android:textStyle="bold"
             android:textColor="#2ECC71" android:paddingBottom="4dp" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:text="GALAXY / PROJECT XENON 5.0  •  EXPERIMENTAL"
+            android:text="GALAXY / PROJECT XENON 5.1  •  NÚCLEO EM DESENVOLVIMENTO"
             android:textColor="#B7C1BD" android:textSize="12sp" android:paddingBottom="14dp" />
         <FrameLayout android:layout_width="match_parent" android:layout_height="220dp"
             android:layout_marginBottom="10dp" android:background="@drawable/nexus_card">
@@ -16,8 +16,44 @@
                 android:layout_height="match_parent" />
             <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_gravity="top" android:background="#BB101319"
-                android:text="V5.0 • PRÉ-VISUALIZAÇÃO GLES (NÃO É IMAGEM DO JOGO)"
+                android:text="V5.1 • GLES / PM4 DIAGNÓSTICO (NÃO É IMAGEM DO JOGO)"
                 android:textSize="10sp" android:textColor="#2ECC71" android:padding="6dp" />
+
+            <!-- Compact semi-transparent controller overlay: both analog sticks and
+                 shoulder/menu/face controls; all events use JNI input state. -->
+            <LinearLayout android:layout_width="match_parent" android:layout_height="84dp"
+                android:layout_gravity="bottom" android:gravity="center_vertical"
+                android:orientation="horizontal" android:background="#330D0E12" android:padding="2dp">
+                <com.x360nexus.AnalogPad android:id="@+id/leftStick"
+                    android:layout_width="66dp" android:layout_height="66dp"
+                    android:contentDescription="Analógico esquerdo" />
+                <LinearLayout android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="wrap_content" android:orientation="vertical">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content">
+                        <Button android:id="@+id/padLB" android:text="LB" android:minWidth="0dp" android:minHeight="0dp"
+                            android:layout_width="0dp" android:layout_weight="1" android:layout_height="34dp" android:textSize="9sp"/>
+                        <Button android:id="@+id/padRB" android:text="RB" android:minWidth="0dp" android:minHeight="0dp"
+                            android:layout_width="0dp" android:layout_weight="1" android:layout_height="34dp" android:textSize="9sp"/>
+                        <Button android:id="@+id/padStart" android:text="Start" android:minWidth="0dp" android:minHeight="0dp"
+                            android:layout_width="0dp" android:layout_weight="1" android:layout_height="34dp" android:textSize="8sp"/>
+                        <Button android:id="@+id/padBack" android:text="Back" android:minWidth="0dp" android:minHeight="0dp"
+                            android:layout_width="0dp" android:layout_weight="1" android:layout_height="34dp" android:textSize="8sp"/>
+                    </LinearLayout>
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content">
+                        <Button android:id="@+id/padUp" android:text="↑" android:minWidth="0dp" android:minHeight="0dp"
+                            android:layout_width="0dp" android:layout_weight="1" android:layout_height="34dp" android:textSize="12sp"/>
+                        <Button android:id="@+id/padDown" android:text="↓" android:minWidth="0dp" android:minHeight="0dp"
+                            android:layout_width="0dp" android:layout_weight="1" android:layout_height="34dp" android:textSize="12sp"/>
+                        <Button android:id="@+id/padX" android:text="X" android:minWidth="0dp" android:minHeight="0dp"
+                            android:layout_width="0dp" android:layout_weight="1" android:layout_height="34dp" android:textSize="12sp"/>
+                        <Button android:id="@+id/padY" android:text="Y" android:minWidth="0dp" android:minHeight="0dp"
+                            android:layout_width="0dp" android:layout_weight="1" android:layout_height="34dp" android:textSize="12sp"/>
+                    </LinearLayout>
+                </LinearLayout>
+                <com.x360nexus.AnalogPad android:id="@+id/rightStick"
+                    android:layout_width="66dp" android:layout_height="66dp"
+                    android:contentDescription="Analógico direito" />
+            </LinearLayout>
         </FrameLayout>
         <TextView android:id="@+id/videoStats" android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginBottom="6dp" android:text="GLES aguardando SurfaceView • sem tradução Xenos"
@@ -104,7 +140,7 @@
             android:fontFamily="monospace" android:textSize="12sp" android:textColor="#C0E3C8"
             android:text="Logs da CPU / XEX / HLE…" android:textIsSelectable="true" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:text="Modo experimental: interpretar instruções não equivale a executar jogos comerciais. A tradução Xenos, o kernel comercial e a execução de jogos ainda não estão completos."
+            android:text="v5.1: execução contínua de instruções implementadas, memória esparsa e controles de teste. Imports comerciais xboxkrnl/xam e renderização de jogos Xenos ainda não estão completos."
             android:textSize="11sp" android:textColor="#A4ACAA" android:paddingTop="12dp" />
     </LinearLayout>
 </ScrollView>
