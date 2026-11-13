@@ -1,71 +1,42 @@
-# X360: GALAXY — v5.0 (núcleo experimental integrável)
+# X360: GALAXY — v5.1 (experimental Android CPU / GPU integration)
 
-**Importante:** este projeto NÃO executa jogos comerciais do Xbox 360. Uma
-compilação do APK não comprova compatibilidade com Minecraft, Forza etc.
+This is an incremental update over v5.0 of the open-source educational X360 Nexus project. **It does not boot commercial Xbox 360 games.** A successful APK build only proves the source compiles and the automated tests pass.
 
-## Auditoria da base v4.5
+## New in v5.1
 
-| Subsistema | Situação encontrada | Atualização v5.0 |
-|---|---|---|
-| ISO e XEX2 | XDVDFS no C++; AES-CBC + LZX + PE32 sob limites; chave externa de 16 bytes | Preservados. Não inclui chaves de console ou jogos |
-| RAM e MMU | Staging C++ esparso de 512 MiB, mas runtime Rust limitado a snapshot contíguo de 16 MiB | Permissões de páginas no snapshot; módulo esparso Rust com R/W/X para testes, ainda não conectado à CPU |
-| CPU PowerPC | Interpretador com instruções inteiras e branches; sem FPU e formas indexadas | Acrescenta operações escalares FPU e cargas/lojas indexadas; erros de opcode continuam explícitos |
-| Threads | Modelo só registra ID | Escalonamento cooperativo round-robin de tarefas originais de teste; não são os 6 hardware threads do Xenon |
-| Kernel | HLE via ABI privada; ordinais reais não mapeados | Eventos, alocação de memória física sintética, modos de vídeo e swaps de teste. NtOpenFile/NtReadFile deixam explícita a ausência de handles de filesystem |
-| GPU | Preferências de backend sem renderer nem CP | Analisador PM4 Type 0/2/3 com buffer limitado e EGL/GLES para triângulo diagnóstico na SurfaceView |
-| Controles | Estado de controle Rust por JNI disponível | Overlay A/B/esquerda/direita e eventos de controle físico para o estado experimental; XamInputGetState real ainda não implementado |
+- **Guest CPU:** expanded PowerPC interpreter for select CRT/boot patterns (including `subf`, `cmpw/cmplw`, `andi.`, `rldicl` subset, `ld/std` basic DS form, indexed reads/writes, LR/CTR/CR and basic FPU). Unimplemented instructions still report PC and opcode and pause rather than silently continuing.
+- **Continuous native execution:** Rust worker thread executes bounded step batches until stopped or an unsupported operation occurs. The Android UI polls IPS, PC, opcode, and r3–r10 without executing the CPU on the UI thread.
+- **Paged image transfer:** Android streams a prepared PE32 from the original C++ XDVDFS/XEX/AES/LZX loader into Rust-owned **sparse 512 MiB guest RAM**, in 64 KiB chunks. Supports PE image sizes up to 128 MiB, replacing the prior 16 MiB Java-side snapshot limit. Host pages are committed on demand and guest accesses enforce page read/write/execute permissions. This is **not** an Xbox 360 TLB/MMU or a shared C++/Rust hardware memory model.
+- **HLE test services:** synthetic memory allocations now map/unmap guest pages. The private test ABI and cooperative scheduler are retained. Xbox kernel and XAM commercial ordinals are not fully implemented and will fail diagnostically.
+- **PM4:** diagnostic command processor now records `EVENT_WRITE` packets in addition to Type 0/2/3, `SET_CONSTANT`, `REG_RMW`, and observations of draw commands. A custom **test-only** register `0xC000` can change the OpenGL clear color. It is not an Xbox Xenos GPU register or real shader translation.
+- **Android:** fixes status-bar inset handling for buttons, adds analog-stick views and more virtual button overlays wired to the experimental Rust JNI pad state. SurfaceView/EGL/OpenGL ES diagnostic output is preserved.
 
-## Arquitetura
+## Loading and testing
 
-`ISO -> XDVDFS -> default.xex -> XEX2 header -> Session key externa (se exigida) -> AES-CBC -> Basic/LZX -> PE32 -> RAM C++/seções -> snapshot Rust (até 16 MiB) -> CPU PPC interpreter + HLE de teste -> telemetria`.
+The loader sequence remains: local ISO -> XDVDFS -> `default.xex` -> XEX2 -> optional user-provided 16-byte key -> AES-128-CBC -> Basic/LZX -> mapped PE32 -> streamed guest pages -> bounded-ISA PowerPC thread. No console key or games are provided. Unsupported images, imports, instructions and PM4 draw/shader commands stop or report an explicit diagnostic.
 
-O pipeline **não é garantido** para todo XEX real: hashes, formatos variantes,
-imports/relocações e comportamento do kernel podem impedir a execução.
-Os bytes PE/XEX são armazenados segundo sua codificação de origem; operações
-PowerPC big-endian são decodificadas explicitamente, e cabeçalhos PE32 são
-little-endian. Não se deve inverter os bytes de um PE inteiro.
+To run native C++ unit tests:
 
-`CPU Rust -> memória snapshot` e `CPU/C++ -> RAM XDVDFS` **ainda não
-compartilham uma MMU única**; o snapshot é limitado a 16 MiB. O módulo
-`core/src/mmu.rs` valida um espaço virtual esparso 512 MiB, mas ainda não
-substitui a memória de execução do CPU.
-
-`Memória C++ -> nativeProcessPm4(address, words) -> RingBuffer FIFO limitado ->
-Type0 / Type2 / Type3 (SET_CONSTANT, REG_RMW, DRAW_INDX)`.
-**Ainda não há interceptação automática de MMIO/DMA do jogo**, nem tradução de
-shader Xenos. PM4_DRAW_INDX é detectado e marcado como **não implementado**.
-
-`SurfaceView -> videoWorker -> ANativeWindow -> EGL OpenGL ES 3 -> glClear /
-triângulo sintético -> eglSwapBuffers`. A superfície mostra um teste com shader
-GLSL próprio, **não a saída de um jogo**. Vulkan permanece seleção não implementada,
-e Turnip não está incluído ou carregado. FPS reportado refere-se somente aos
-quadros de demonstração.
-
-## Testes
-
-C++ host:
-```
+```sh
 cmake -S . -B build/host -DCMAKE_BUILD_TYPE=Release
-cmake --build build/host
+cmake --build build/host --parallel 2
 ctest --test-dir build/host --output-on-failure
 ```
 
-Rust: `cargo test --manifest-path core/Cargo.toml`.
+To run Rust tests:
 
-Android: executar `.github/workflows/build-x360-android-apk.yml` no GitHub
-Actions. Compila C++ JNI, Rust JNI e Kotlin. O APK fica no artifact
-**X360-Nexus-v5.0-Android-ARM64-Debug-APK**.
+```sh
+cargo test --manifest-path core/Cargo.toml
+```
 
-## Modificações desta versão
+Android APK via `.github/workflows/build-x360-android-apk.yml`. The artifact is named `X360-Nexus-v5.1-Android-ARM64-Debug-APK`.
 
-- Rust: `cpu.rs`, `memory.rs`, `kernel.rs`, `runtime.rs`, `scheduler.rs` (novo),
-  `mmu.rs` (novo), `lib.rs`, `Cargo.toml`.
-- C++: `xenos_pm4.{hpp,cpp}` (novos), `xenos_video.{hpp,cpp}` (novos),
-  `gpu_pm4_jni.cpp` (novo), `jni_bridge.cpp`, `gpu_settings.cpp`, `CMakeLists.txt`.
-- Kotlin/XML: `MainActivity.kt`, `activity_main.xml`, `AndroidManifest.xml`,
-  `android/app/build.gradle`.
-- Testes: `tests/pm4_tests.cpp`, `CMakeLists.txt` na raiz; workflow atualizado.
+## Modified/new files relative to v5.0
 
-Limitações: sem CPU Xenon completa/VMX128/JIT, 6 hardware threads, imports
-`xboxkrnl.exe`/`xam.xex` reais, memória partilhada plena, GPU Xenos ou
-renderização de jogos. Chaves de console não são armazenadas nem distribuídas.
+- Rust: `core/src/cpu.rs`, `core/src/memory.rs`, `core/src/kernel.rs`, `core/src/runtime.rs`, `core/Cargo.toml`.
+- C++: `android/app/src/main/cpp/jni_bridge.cpp`, `xenos_pm4.hpp`, `xenos_pm4.cpp`, `xenos_video.cpp`.
+- Kotlin: `android/app/src/main/java/com/x360nexus/MainActivity.kt`, `AnalogPad.kt` (new).
+- XML: `android/app/src/main/res/layout/activity_main.xml`.
+- Build/test: `android/app/build.gradle`, `.github/workflows/build-x360-android-apk.yml`, `tests/pm4_tests.cpp`.
+
+**Known limitations:** incomplete Xbox PowerPC ISA (including VMX128 and exceptions), incomplete Xbox 360 kernel/XAM imports and file handles, no Xenos shader translation, no Vulkan backend, no automatic game GPU MMIO/DMA interception, and no independently verified commercial game compatibility. The diagnostic GL scene is not game output.
