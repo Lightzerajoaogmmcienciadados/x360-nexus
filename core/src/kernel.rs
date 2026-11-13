@@ -124,6 +124,23 @@ impl Kernel {
         Ok(format!("{status}: synthetic HLE status=0"))
     }
 }
+// Real XEX2 import-thunk ABI: only these verified ordinals have a
+// narrowly scoped implementation. Other ordinals must stop with diagnostics.
+impl Kernel {
+    pub fn dispatch_xex_thunk(&mut self,module:u32,ordinal:u32,
+        gpr:&mut [u64;32],mem:&mut Memory)->Result<String,String>{
+        if module!=1 {return Err(format!("xam.xex ordinal {ordinal}: HLE nao implementado"));}
+        match ordinal {
+            338=>self.dispatch_private(3,gpr,mem),  // KeTlsAlloc
+            340=>self.dispatch_private(4,gpr,mem),  // KeTlsGetValue
+            341=>self.dispatch_private(5,gpr,mem),  // KeTlsSetValue
+            // Do not fake zero for NtAllocateVirtualMemory, thread creation,
+            // XamUserGetSigninState, VdSwap, etc. Their real ABI/state is absent.
+            _=>Err(format!("xboxkrnl.exe ordinal {ordinal}: HLE nao implementado")),
+        }
+    }
+}
+
 impl Default for Kernel{fn default()->Self{Self::new()}}
 #[cfg(test)]mod tests {
  use super::*;
