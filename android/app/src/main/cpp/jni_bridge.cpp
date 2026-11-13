@@ -217,7 +217,7 @@ Java_com_x360nexus_MainActivity_nativePrepareStagedXex(JNIEnv* env, jobject) {
             "\nBibliotecas importadas: "+std::to_string(g_prepared->imports.size())+
             "\n"+g_import_inventory->describe()+
             "\nThunks HLE de tipo 1 aplicados em seções executáveis: "+std::to_string(g_patched_thunks)+"\n"
-            "CPU Rust interpreta somente instrucoes conhecidas; a GPU Xenos ainda nao traduz shaders comerciais.");
+            "CPU PowerPC v5.7 e PM4 experimental (sem traducao integral Xenos/GLSL).");
     } catch(const std::exception& e) {
         {
             std::lock_guard<std::mutex> lock(g_memory_mutex);

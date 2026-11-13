@@ -1,4 +1,4 @@
-//! X360 GALAXY v5.6: diagnostic PPC & XEX2 loader; not a commercial game emulator.
+//! X360 GALAXY v5.7: incremental PPC interpreter & XEX2/PM4 loader; retail games not guaranteed.
 pub mod audio;
 pub mod cpu;
 pub mod gpu;
