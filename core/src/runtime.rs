@@ -19,6 +19,8 @@ const MAIN_TLS:u64=0x7101_0000;
 const EXPORT_VARIABLE_BASE:u64=0x7200_0000;
 const EXPORT_VARIABLE_STRIDE:u64=256;
 const MAX_IMPORT_VARIABLES:usize=8192;
+const MOCK_MODULE_BASE:u64=0x7400_0100;
+const MOCK_XEX_HEADER:u64=0x7400_0200;
 
 /// Limited user-mode bootstrap model based on known Xbox 360 KPCR offsets.
 /// It is not the complete kernel KTHREAD/TEB initialization sequence.
@@ -67,6 +69,15 @@ fn fault_instruction(cpu:&Cpu,word:u32)->String {
     let op=word>>26;let rt=(word>>21)&31;let ra=((word>>16)&31) as usize;
     let rb=((word>>11)&31) as usize;
     let disp=word as u16 as i16 as i64;
+    match op {
+        14|15=>return format!("DISASM={} r{rt},r{ra},{disp}",if op==14{"addi"}else{"addis"}),
+        24|25=>return format!("DISASM={} r{ra},r{rt},0x{:04X}",
+            if op==24{"ori"}else{"oris"},word&0xFFFF),
+        18=>return format!("DISASM=b{} 0x{:08X}",if word&1!=0{"l"}else{""},
+            (cpu.pc as u64).wrapping_add(((((word&0x03FF_FFFC) as i32)<<6)>>6) as i64 as u64)),
+        17=>return "DISASM=sc (syscall)".into(),
+        _=>(),
+    }
     let dname=match op {
         32=>"lwz",33=>"lwzu",34=>"lbz",36=>"stw",37=>"stwu",38=>"stb",
         40=>"lhz",44=>"sth",48=>"lfs",50=>"lfd",52=>"stfs",54=>"stfd",_=>"",
@@ -98,6 +109,7 @@ pub struct Session {
     image_base:u64,image_size:usize,loaded:usize,steps:u64,paused:Option<String>,
     last_event:String,last_ips:f64, imports:BTreeMap<usize,(u32,u32)>,
     variables:BTreeMap<usize,(u32,u32,u32)>,
+    first_instruction:Option<String>, known_variables:usize, boot_clock:Instant,
 }
 impl Session {
     pub fn create_paged(base:u64,entry:u64,size:usize,ranges:&[i64])->Result<Self,String>{
@@ -128,7 +140,8 @@ impl Session {
         kernel.set_guest_heap_base(0x2000_0000)?;
         Ok(Self{cpu,mem,kernel,exec,scheduler:Scheduler::new(),image_base:base,
             image_size:size,loaded:0,steps:0,paused:None,last_event:String::new(),last_ips:0.0,
-            imports:BTreeMap::new(),variables:BTreeMap::new()})
+            imports:BTreeMap::new(),variables:BTreeMap::new(),
+            first_instruction:None,known_variables:0,boot_clock:Instant::now()})
     }
     pub fn create(image:Vec<u8>,base:u64,entry:u64,ranges:&[i64])->Result<Self,String>{
         let mut s=Self::create_paged(base,entry,image.len(),ranges)?;
@@ -203,15 +216,61 @@ impl Session {
         self.mem.set_page_permissions(EXPORT_VARIABLE_BASE,region_len as usize,
             Memory::READ|Memory::WRITE).map_err(str::to_string)?;
         let mut variables=BTreeMap::new();
+        let mut known_variables=0usize;
+        // Small guest-side loader object for a *test* executable handle.
+        // This is not the complete XEX header/module loader ABI.
+        if staged.values().any(|&(m,o)|m==1 && o==403) {
+            self.mem.set_page_permissions(0x7400_0000,4096,Memory::READ|Memory::WRITE)
+                .map_err(str::to_string)?;
+            self.mem.write_u32_be((MOCK_MODULE_BASE+0x58) as usize,MOCK_XEX_HEADER as u32)
+                .map_err(str::to_string)?;
+            self.mem.write(MOCK_XEX_HEADER as usize,b"XEX2").map_err(str::to_string)?;
+        }
         for (i,(&slot,&(module,ordinal))) in staged.iter().enumerate(){
             let pointer=EXPORT_VARIABLE_BASE+i as u64*EXPORT_VARIABLE_STRIDE;
-            // A cell is zero-initialized unless a real export mapping exists.
-            // The exact slot is updated by the loader, never by guest code.
+            // An IAT type-0 import refers to an exported variable. The slot
+            // receives a guest pointer; only a small, explicitly understood
+            // subset gets guest-side data. Other cells remain zeroed and
+            // unresolved, not fake working kernel exports.
+            if module==1 {
+                let mut recognized=true;
+                match ordinal {
+                    342=>{ // XboxHardwareInfo, flags + CPU count (synthetic)
+                        self.mem.write_u32_be(pointer as usize,0x20).map_err(str::to_string)?;
+                        self.mem.write_u8((pointer+4) as usize,6).map_err(str::to_string)?;
+                    },
+                    344=>{ // XboxKrnlVersion (BE16 2.0.17559.0)
+                        for (j,n) in [2u16,0,17559,0].iter().enumerate(){
+                            self.mem.write_u16_be((pointer+2*j as u64) as usize,*n)
+                                .map_err(str::to_string)?;
+                        }
+                    },
+                    173=>{ // KeTimeStampBundle: initial zeroed timestamp
+                        self.mem.write_u32_be((pointer+16) as usize,0)
+                            .map_err(str::to_string)?;
+                    },
+                    403=>{ // XexExecutableModuleHandle: simplified loader entry
+                        self.mem.write_u32_be(pointer as usize,MOCK_MODULE_BASE as u32)
+                            .map_err(str::to_string)?;
+                    },
+                    430=>{self.mem.write(pointer as usize,b"\"default.xex\"\0")
+                        .map_err(str::to_string)?;},
+                    431=>{self.mem.write(pointer as usize,b"game:\\default.xex\0")
+                        .map_err(str::to_string)?;},
+                    446|447=>{ // VdGlobalDevice / VdGlobalXamDevice are null on boot
+                        self.mem.write_u32_be(pointer as usize,0).map_err(str::to_string)?;
+                    },
+                    448=>{self.mem.write_u32_be(pointer as usize,500).map_err(str::to_string)?;},
+                    _=>recognized=false,
+                }
+                if recognized {known_variables+=1;}
+            }
             self.mem.load_image_bytes(slot,&(pointer as u32).to_be_bytes())
                 .map_err(str::to_string)?;
             variables.insert(slot,(module,ordinal,pointer as u32));
         }
         self.variables=variables;
+        self.known_variables=known_variables;
         Ok(self.variables.len())
     }
     pub fn ready(&self)->bool{self.loaded==self.image_size}
@@ -233,6 +292,13 @@ impl Session {
             let opcode=match self.mem.fetch_u32_be(pc){
                 Ok(w)=>w,Err(e)=>{self.paused=Some(format!("FALHA EXEC @0x{pc:08X}: {e}"));break;}
             };
+            let first=self.steps==0 && self.first_instruction.is_none();
+            if first {
+                self.first_instruction=Some(format!(
+                    "INSTRUCAO #0: PC=0x{pc:08X} OP={opcode:08X} | {} | ANTES r1=0x{:08X} r3=0x{:08X} r13=0x{:08X} r30=0x{:08X} r31=0x{:08X}",
+                    fault_instruction(&self.cpu,opcode), self.cpu.gpr[1],self.cpu.gpr[3],
+                    self.cpu.gpr[13],self.cpu.gpr[30],self.cpu.gpr[31]));
+            }
             let result=if let Some(&(module,ordinal))=self.imports.get(&pc) {
                 let name=if module==1 {"xboxkrnl.exe"}else{"xam.xex"};
                 let result=self.kernel.dispatch_xex_thunk(module,ordinal,&mut self.cpu.gpr,&mut self.mem);
@@ -274,8 +340,23 @@ impl Session {
             if let Err(e)=result{
                 self.paused=Some(format!("PARADA: {e} | PC=0x{pc:08X} OP={opcode:08X} | {}",fault_instruction(&self.cpu,opcode)));break;
             }
+            if first {
+                if let Some(msg)=&mut self.first_instruction {
+                    let _=write!(msg," | DEPOIS r1=0x{:08X} r3=0x{:08X} r13=0x{:08X} r30=0x{:08X} r31=0x{:08X} NEXT_PC=0x{:08X}",
+                        self.cpu.gpr[1],self.cpu.gpr[3],self.cpu.gpr[13],
+                        self.cpu.gpr[30],self.cpu.gpr[31],self.cpu.pc);
+                }
+            }
             count+=1;self.steps=self.steps.saturating_add(1);
             self.kernel.tick();self.scheduler.tick(&mut self.cpu);
+        }
+        // 1-ms-resolution guest uptime approximation for a supported
+        // KeTimeStampBundle import (ordinal 173). Never mutate foreign slots.
+        for (_, &(module,ordinal,cell)) in &self.variables {
+            if module==1 && ordinal==173 {
+                let ms=self.boot_clock.elapsed().as_millis().min(u32::MAX as u128) as u32;
+                let _=self.mem.write_u32_be(cell as usize+16,ms);
+            }
         }
         self.last_ips=count as f64/start.elapsed().as_secs_f64().max(0.000001);
         if self.paused.is_some(){self.report("PAUSED",self.paused.as_deref().unwrap_or(""))}
@@ -291,7 +372,8 @@ impl Session {
             self.last_ips,self.steps,self.cpu.pc,self.cpu.lr,self.cpu.ctr,self.mem.committed_bytes()/1024);
         let _=writeln!(s,"THREAD={} / {} (agendador de teste); IMPORT_THUNKS={}",
             self.scheduler.current_id(),self.scheduler.threads(),self.imports.len());
-        let _=writeln!(s,"IMPORT_VARIABLE_CELLS={} (placeholder backing; exports desconhecidos)",self.variables.len());
+        let _=writeln!(s,"IMPORT_VARIABLE_CELLS={} EXPORTS_INICIALIZADOS={} (modelo parcial; outros nao implementados)",self.variables.len(),self.known_variables);
+        if let Some(first)=&self.first_instruction{let _=writeln!(s,"{first}");}
         let (ring,words,swaps)=self.kernel.gpu_ring_snapshot();
         let _=writeln!(s,"GPU_RING=0x{ring:08X}; GPU_DWORDS={words}; SWAPS={swaps}");
         if !reason.is_empty(){let _=writeln!(s,"{reason}");}
@@ -515,5 +597,31 @@ pub extern "system" fn Java_com_x360nexus_MainActivity_nativeReadSessionMemory(
         let mut s=Session::create(code,base,base,&[base as i64,base as i64+0x1000]).unwrap();
         assert!(s.set_variable_catalog(&[(base+0x1100) as i64,1,0x10]).is_err());
         assert!(s.set_variable_catalog(&[base as i64,1,15]).is_err());
+    }
+}
+
+#[cfg(test)] mod v56_boot_regression {
+    use super::*;
+    #[test] fn first_instruction_shows_register_transition() {
+        let base=0x82000000u64;
+        // addi r30,r0,7; invalid opcode after first instruction
+        let mut session=Session::create(vec![0x3B,0xC0,0,7,0xFF,0xFF,0xFF,0xFF],
+            base,base,&[base as i64,base as i64+8]).unwrap();
+        let report=session.step_chunk(2);
+        assert!(report.contains("INSTRUCAO #0: PC=0x82000000"),"{report}");
+        assert!(report.contains("DEPOIS r1="),"{report}");
+        assert!(report.contains("r30=0x00000007"),"{report}");
+        assert!(report.contains("PC=0x82000004"),"{report}");
+    }
+    #[test] fn recognized_export_variables_are_initialized_by_real_ordinals() {
+        let base=0x82000000u64;
+        let mut s=Session::create(vec![0x60,0,0,0,0,0x00,0x01,0x56,0,0x00,0x01,0xC0],
+            base,base,&[base as i64,base as i64+4]).unwrap();
+        assert_eq!(s.set_variable_catalog(&[base as i64+4,1,342,base as i64+8,1,448]).unwrap(),2);
+        assert_eq!(s.known_variables,2);
+        let info=s.mem.read_u32_be((EXPORT_VARIABLE_BASE) as usize).unwrap();
+        assert_eq!(info,0x20);
+        let clock=s.mem.read_u32_be((EXPORT_VARIABLE_BASE+EXPORT_VARIABLE_STRIDE) as usize).unwrap();
+        assert_eq!(clock,500);
     }
 }
