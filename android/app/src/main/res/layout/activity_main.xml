@@ -1,1 +1,146 @@
-The requested file reference is not currently visible. Use files.search or files.list to rediscover the file, then retry with a returned ref_id or file_id.
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView android:id="@+id/rootScroll" xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:fitsSystemWindows="true" android:clipToPadding="false" android:fillViewport="true" android:background="#0D0E12">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="vertical" android:padding="16dp">
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="X360 NEXUS" android:textSize="30sp" android:textStyle="bold"
+            android:textColor="#2ECC71" android:paddingBottom="4dp" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="GALAXY / PROJECT XENON 5.1  •  NÚCLEO EM DESENVOLVIMENTO"
+            android:textColor="#B7C1BD" android:textSize="12sp" android:paddingBottom="14dp" />
+        <FrameLayout android:layout_width="match_parent" android:layout_height="220dp"
+            android:layout_marginBottom="10dp" android:background="@drawable/nexus_card">
+            <SurfaceView android:id="@+id/videoSurface" android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_gravity="top" android:background="#BB101319"
+                android:text="V5.1 • GLES / PM4 DIAGNÓSTICO (NÃO É IMAGEM DO JOGO)"
+                android:textSize="10sp" android:textColor="#2ECC71" android:padding="6dp" />
+
+            <!-- Compact semi-transparent controller overlay: both analog sticks and
+                 shoulder/menu/face controls; all events use JNI input state. -->
+            <LinearLayout android:layout_width="match_parent" android:layout_height="84dp"
+                android:layout_gravity="bottom" android:gravity="center_vertical"
+                android:orientation="horizontal" android:background="#330D0E12" android:padding="2dp">
+                <com.x360nexus.AnalogPad android:id="@+id/leftStick"
+                    android:layout_width="66dp" android:layout_height="66dp"
+                    android:contentDescription="Analógico esquerdo" />
+                <LinearLayout android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="wrap_content" android:orientation="vertical">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content">
+                        <Button android:id="@+id/padLB" android:text="LB" android:minWidth="0dp" android:minHeight="0dp"
+                            android:layout_width="0dp" android:layout_weight="1" android:layout_height="34dp" android:textSize="9sp"/>
+                        <Button android:id="@+id/padRB" android:text="RB" android:minWidth="0dp" android:minHeight="0dp"
+                            android:layout_width="0dp" android:layout_weight="1" android:layout_height="34dp" android:textSize="9sp"/>
+                        <Button android:id="@+id/padStart" android:text="Start" android:minWidth="0dp" android:minHeight="0dp"
+                            android:layout_width="0dp" android:layout_weight="1" android:layout_height="34dp" android:textSize="8sp"/>
+                        <Button android:id="@+id/padBack" android:text="Back" android:minWidth="0dp" android:minHeight="0dp"
+                            android:layout_width="0dp" android:layout_weight="1" android:layout_height="34dp" android:textSize="8sp"/>
+                    </LinearLayout>
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content">
+                        <Button android:id="@+id/padUp" android:text="↑" android:minWidth="0dp" android:minHeight="0dp"
+                            android:layout_width="0dp" android:layout_weight="1" android:layout_height="34dp" android:textSize="12sp"/>
+                        <Button android:id="@+id/padDown" android:text="↓" android:minWidth="0dp" android:minHeight="0dp"
+                            android:layout_width="0dp" android:layout_weight="1" android:layout_height="34dp" android:textSize="12sp"/>
+                        <Button android:id="@+id/padX" android:text="X" android:minWidth="0dp" android:minHeight="0dp"
+                            android:layout_width="0dp" android:layout_weight="1" android:layout_height="34dp" android:textSize="12sp"/>
+                        <Button android:id="@+id/padY" android:text="Y" android:minWidth="0dp" android:minHeight="0dp"
+                            android:layout_width="0dp" android:layout_weight="1" android:layout_height="34dp" android:textSize="12sp"/>
+                    </LinearLayout>
+                </LinearLayout>
+                <com.x360nexus.AnalogPad android:id="@+id/rightStick"
+                    android:layout_width="66dp" android:layout_height="66dp"
+                    android:contentDescription="Analógico direito" />
+            </LinearLayout>
+        </FrameLayout>
+        <TextView android:id="@+id/videoStats" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginBottom="6dp" android:text="GLES aguardando SurfaceView • sem tradução Xenos"
+            android:textColor="#88CC99" android:textSize="11sp" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:gravity="center" android:orientation="horizontal">
+            <Button android:id="@+id/padLeft" android:layout_width="0dp" android:layout_weight="1" android:layout_height="52dp"
+                android:text="◀" android:contentDescription="Controle digital esquerda" android:textColor="#FFFFFF" android:backgroundTint="#34383E" />
+            <Button android:id="@+id/padRight" android:layout_width="0dp" android:layout_weight="1" android:layout_height="52dp"
+                android:text="▶" android:contentDescription="Controle digital direita" android:textColor="#FFFFFF" android:backgroundTint="#34383E" />
+            <Button android:id="@+id/padA" android:layout_width="0dp" android:layout_weight="1" android:layout_height="52dp"
+                android:text="A" android:contentDescription="Controle A" android:textColor="#FFFFFF" android:backgroundTint="#107C10" />
+            <Button android:id="@+id/padB" android:layout_width="0dp" android:layout_weight="1" android:layout_height="52dp"
+                android:text="B" android:contentDescription="Controle B" android:textColor="#FFFFFF" android:backgroundTint="#34383E" />
+        </LinearLayout>
+        <Button android:id="@+id/pm4Demo" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="TESTAR DECODIFICADOR PM4 (DADOS SINTÉTICOS)" android:textSize="12sp"
+            android:textColor="#FFFFFF" android:backgroundTint="#26382C" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:background="@drawable/nexus_card" android:padding="14dp">
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="HUD  •  HARDWARE" android:textColor="#2ECC71" android:textStyle="bold" />
+            <TextView android:id="@+id/gpuInfo" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="Detectando GPU…" android:textColor="#FFFFFF" android:textSize="13sp" android:paddingTop="8dp" />
+            <TextView android:id="@+id/telemetry" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="RAM: 0 MiB  |  IPS: 0  |  FPS: N/D" android:textColor="#A9E7B2" android:textSize="13sp" android:paddingTop="6dp" />
+        </LinearLayout>
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="BIBLIOTECA DE JOGOS" android:textColor="#FFFFFF" android:textStyle="bold"
+            android:textSize="18sp" android:paddingTop="18dp" android:paddingBottom="6dp" />
+        <LinearLayout android:id="@+id/gameList" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:orientation="vertical"
+            android:background="@drawable/nexus_card" android:padding="10dp" />
+        <Button android:id="@+id/selectIso" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="ADICIONAR ISO À BIBLIOTECA" android:textColor="#FFFFFF"
+            android:background="@drawable/nexus_button" android:layout_marginTop="10dp" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:layout_marginTop="14dp">
+            <Button android:id="@+id/startGame" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+                android:text="INICIAR / TRACE" android:textColor="#FFFFFF" android:background="@drawable/nexus_button" />
+            <Button android:id="@+id/stopGame" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+                android:text="PARAR" android:layout_marginStart="7dp" android:textColor="#FFFFFF" android:backgroundTint="#34383E" />
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:layout_marginTop="4dp">
+            <Button android:id="@+id/loadKey" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+                android:text="CARREGAR CHAVE" android:textColor="#FFFFFF" android:backgroundTint="#303A32" />
+            <Button android:id="@+id/configButton" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+                android:text="CONFIGURAÇÕES" android:layout_marginStart="7dp" android:textColor="#FFFFFF" android:backgroundTint="#303A32" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/settingsPanel" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone"
+            android:background="@drawable/nexus_card" android:padding="14dp" android:layout_marginTop="12dp">
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="CONFIGURAÇÕES DE GPU" android:textStyle="bold" android:textColor="#2ECC71" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="API gráfica solicitada" android:textColor="#FFFFFF" android:paddingTop="12dp" />
+            <Spinner android:id="@+id/backend" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="Resolução interna" android:textColor="#FFFFFF" android:paddingTop="12dp" />
+            <Spinner android:id="@+id/resolution" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="Precisão dos shaders (Mali)" android:textColor="#FFFFFF" android:paddingTop="12dp" />
+            <Spinner android:id="@+id/precision" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <CheckBox android:id="@+id/turnip" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="Driver Turnip customizado (não incluído)" android:textColor="#B5B5B5" android:enabled="false" />
+            <CheckBox android:id="@+id/shaderCache" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="Cache de shaders (preferência)" android:textColor="#FFFFFF" />
+            <CheckBox android:id="@+id/vsync" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="V-Sync (preferência)" android:textColor="#FFFFFF" />
+            <CheckBox android:id="@+id/fpsToggle" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="Exibir FPS / IPS" android:textColor="#FFFFFF" />
+            <Button android:id="@+id/saveSettings" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="SALVAR CONFIGURAÇÕES" android:textColor="#FFFFFF" android:background="@drawable/nexus_button" />
+            <TextView android:id="@+id/settingsNotice" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="As opções serão aplicadas quando existir um backend Xenos funcional."
+                android:textSize="12sp" android:textColor="#B7C1BD" />
+        </LinearLayout>
+        <Button android:id="@+id/consoleToggle" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="CONSOLE DE TELEMETRIA  ▾" android:textColor="#FFFFFF"
+            android:backgroundTint="#34383E" android:layout_marginTop="12dp" />
+        <TextView android:id="@+id/console" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:minHeight="140dp" android:background="@drawable/nexus_card" android:padding="12dp"
+            android:fontFamily="monospace" android:textSize="12sp" android:textColor="#C0E3C8"
+            android:text="Logs da CPU / XEX / HLE…" android:textIsSelectable="true" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="v5.1: execução contínua de instruções implementadas, memória esparsa e controles de teste. Imports comerciais xboxkrnl/xam e renderização de jogos Xenos ainda não estão completos."
+            android:textSize="11sp" android:textColor="#A4ACAA" android:paddingTop="12dp" />
+    </LinearLayout>
+</ScrollView>
