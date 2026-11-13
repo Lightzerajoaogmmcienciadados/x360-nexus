@@ -95,7 +95,15 @@ std::string draw() {
     // only for this demonstration; no Xenos render-target scaling occurs.
     glViewport(0,0,std::min(rw,int(width)),std::min(rh,int(height)));
     const float t=float(g.frames%180)/180.f;
-    glClearColor(0.025f,0.065f+0.04f*t,0.04f,1.f);
+    // A diagnostic SET_CONSTANT2 to app-defined register 0xC000 controls
+    // the clear color. This is NOT a translation of actual Xenos EDRAM clears.
+    uint32_t color=0;
+    if(x360::gpu::processor().diagnostic_clear_color(color)){
+        glClearColor(float((color>>24)&255)/255.f,float((color>>16)&255)/255.f,
+                     float((color>>8)&255)/255.f,float(color&255)/255.f);
+    }else{
+        glClearColor(0.025f,0.065f+0.04f*t,0.04f,1.f);
+    }
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(g.program);glBindBuffer(GL_ARRAY_BUFFER,g.vbo);
     glEnableVertexAttribArray(0);glVertexAttribPointer(0,2,GL_FLOAT,GL_FALSE,0,nullptr);
@@ -119,7 +127,7 @@ std::string video_status(){
     const double seconds=std::max(0.001,std::chrono::duration<double>(Clock::now()-g.epoch).count());
     std::ostringstream out;out<<g.error<<"; frames="<<g.frames<<"; media FPS="<<int(g.frames/seconds);
     auto pm4=processor().stats();
-    out<<"; PM4="<<pm4.packets<<"; draws nao traduzidos="<<pm4.draws_seen;
+    out<<"; PM4="<<pm4.packets<<"; events="<<pm4.event_writes<<"; draws nao traduzidos="<<pm4.draws_seen;
     if(!pm4.last_event.empty())out<<"; ultimo PM4="<<pm4.last_event;
     return out.str();
 }
