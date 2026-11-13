@@ -127,7 +127,7 @@ std::string video_status(){
     const double seconds=std::max(0.001,std::chrono::duration<double>(Clock::now()-g.epoch).count());
     std::ostringstream out;out<<g.error<<"; frames="<<g.frames<<"; media FPS="<<int(g.frames/seconds);
     auto pm4=processor().stats();
-    out<<"; PM4="<<pm4.packets<<"; events="<<pm4.event_writes<<"; draws nao traduzidos="<<pm4.draws_seen;
+    out<<"; PM4="<<pm4.packets<<"; LOAD_ALU="<<pm4.alu_loads<<"; events="<<pm4.event_writes<<"; draws sem shader Xenos="<<pm4.draws_seen;
     if(!pm4.last_event.empty())out<<"; ultimo PM4="<<pm4.last_event;
     return out.str();
 }
