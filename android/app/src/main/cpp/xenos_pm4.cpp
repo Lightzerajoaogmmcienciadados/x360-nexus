@@ -21,6 +21,14 @@ constexpr uint32_t kImLoad=0x27u;
 constexpr uint32_t kImLoadImmediate=0x2bu;
 }
 CommandProcessor& processor() {static CommandProcessor instance; return instance;}
+void CommandProcessor::reset(){
+    std::lock_guard<std::mutex> lock(mutex_);
+    queue_.clear();
+    regs_.fill(0);
+    shader_images_[0].clear();
+    shader_images_[1].clear();
+    stats_=Stats{};
+}
 void CommandProcessor::write_register(uint32_t index, uint32_t value) {
     if (index < regs_.size()) { regs_[index] = value; ++stats_.register_writes; }
     else { ++stats_.unsupported; stats_.last_event = "REG out of range"; }

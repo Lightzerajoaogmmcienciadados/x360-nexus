@@ -256,7 +256,8 @@ PreparedImage map_pe(Bytes pe,const Headers& h, x360::xdvdfs::GuestRam& ram){
     const size_t section_start=opt_offset+optsize;
     ensure(pe,section_start,size_t(nsec)*40,"Tabela de secoes PE truncada");
     PreparedImage result;
-    result.base=base; result.pc=entry; result.image_size=size_of_image;result.imports=h.imports;
+    result.base=base; result.pc=entry; result.image_size=size_of_image;
+    result.title_id=h.title_id;result.imports=h.imports;
     // Always map headers first. BSS is implicitly zero in sparse GuestRam.
     const size_t headers_len=std::min<size_t>(size_of_headers,pe.size());
     if(headers_len>size_of_image)throw std::runtime_error("PE headers maiores que SizeOfImage");
@@ -283,6 +284,26 @@ PreparedImage map_pe(Bytes pe,const Headers& h, x360::xdvdfs::GuestRam& ram){
         result.sections.push_back(std::move(sec));
     }
     if(!result.can_fetch(entry,4))throw std::runtime_error("Entry Point nao pertence a secao executavel PE");
+    // Capture XEX2 import descriptors immediately after mapping PE sections.
+    // No variable relocation, thunk patch, HLE setup or Rust import upload
+    // has occurred. The original 0x00/0x01 descriptor words are retained
+    // for the whole lifetime of PreparedImage.
+    for(auto& lib:result.imports){
+        lib.original_descriptors.reserve(lib.guest_slots.size());
+        for(uint32_t addr:lib.guest_slots){
+            if(addr<base || uint64_t(addr)+4>uint64_t(base)+size_of_image || (addr&3)){
+                lib.original_descriptors.push_back(std::nullopt);
+                continue;
+            }
+            uint8_t bytes[4]{};
+            try {
+                ram.read(addr,bytes,4);
+                lib.original_descriptors.emplace_back(
+                    uint32_t(bytes[0])<<24|uint32_t(bytes[1])<<16|
+                    uint32_t(bytes[2])<<8|uint32_t(bytes[3]));
+            }catch(...){lib.original_descriptors.push_back(std::nullopt);}
+        }
+    }
     return result;
 }
 } // namespace x360::xex

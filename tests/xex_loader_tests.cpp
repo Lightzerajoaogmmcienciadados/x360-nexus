@@ -388,6 +388,26 @@ int main(){
     assert(inv.thunks.size()==1 && inv.thunks[0].ordinal==0x191);
     assert(patch_import_thunks(inv,{{base+0x1000,base+0x1010}},ram)==1);
   }
+  // v5.8: an immutable prepatch descriptor snapshot is counted even when
+  // the mapped PE is modified later; patches still reject unexpected code.
+  {
+    x360::xdvdfs::GuestRam ram;
+    constexpr uint32_t base=0x82000000u;
+    ImportLibrary lib;lib.name="xboxkrnl.exe";
+    lib.guest_slots={base+0x1000,base+0x4000};
+    lib.original_descriptors={0x01000152u,0x00000152u};
+    const uint8_t broken_word[4]{0x60,0,0,0};
+    ram.write(base+0x1000,broken_word,4);
+    const uint8_t original_variable[4]{0,0,1,0x52};
+    ram.write(base+0x4000,original_variable,4);
+    const auto inv=inspect_import_thunks({lib},base,0x6000,ram,
+                                          {{base+0x1000,base+0x2000}});
+    assert(inv.prepatch_descriptors==2);
+    assert(inv.snapshot_mismatches==1);
+    assert(inv.type1_records==1 && inv.type1_inside_exec==1);
+    assert(inv.variables_found.size()==1 && inv.thunks.size()==1);
+    assert(patch_import_thunks(inv,{{base+0x1000,base+0x2000}},ram)==0);
+  }
   // v5.7: some executables expose only type-0 IAT records. Discover
   // *actual* stubs in .text through their full indirect branch into IAT.
   {

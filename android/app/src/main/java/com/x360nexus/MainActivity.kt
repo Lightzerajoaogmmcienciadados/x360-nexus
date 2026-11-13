@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** v5.6 immersive Android UI, sparse guest RAM and experimental PM4 GLES. */
+/** v5.8 immersive Android UI, sparse guest RAM and snapshot-based PM4 GLES. */
 class MainActivity : Activity() {
     companion object {
         private const val PICK_ISO=100
@@ -59,6 +59,7 @@ class MainActivity : Activity() {
     private external fun nativePreparedSnapshot():ByteArray? // legacy diagnostic only
     private external fun nativePreparedChunk(address:Long,length:Int):ByteArray?
     private external fun nativeStartSessionPaged(base:Long,entry:Long,size:Int,ranges:LongArray):String
+    private external fun nativeConfigureBootCr(titleId:Long):String
     private external fun nativeUploadSessionChunk(address:Long,data:ByteArray):String
     private external fun nativeLaunchSession():String
     private external fun nativePollSession():String
@@ -78,6 +79,7 @@ class MainActivity : Activity() {
     private external fun nativeProcessPm4(address:Long, dwords:Int):String
     private external fun nativeSubmitPm4Bytes(packet:ByteArray):String
     private external fun nativeReadSessionMemory(address:Long,length:Int):ByteArray?
+    private external fun nativeDrainPm4Frame():ByteArray?
     private external fun nativeSetButton(mask:Int, pressed:Boolean)
     private external fun nativeSetAxis(axis:Int, value:Int)
     private external fun nativeSetGpuCapabilities(renderer:String,gles:String,vulkan:String):String
@@ -253,7 +255,7 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.consoleToggle).setOnClickListener {
             console.visibility=if(console.visibility==View.VISIBLE)View.GONE else View.VISIBLE
         }
-        log("v5.5: Rust JNI=${RUST_READY}, C++ JNI=${NATIVE_READY}. XEX AES/Basic e imports verificados; GPU Xenos ainda incompleta.")
+        log("v5.8: Rust JNI=${RUST_READY}, C++ JNI=${NATIVE_READY}. XEX AES/Basic e imports verificados; GPU Xenos ainda incompleta.")
         worker.execute {
             val info=GpuDetector.query(this)
             currentGpu="${info.family}\n${info.renderer}\nOpenGL ES: ${info.version}\nVulkan: ${info.vulkan}"
@@ -451,7 +453,7 @@ class MainActivity : Activity() {
                 videoWorker.execute{if(NATIVE_READY)nativeSetVideoSurface(null)}
             }
         })
-        uiLog("Tela paisagem iniciada. Renderizacao GLES atual ainda e diagnostica, nao Minecraft.")
+        uiLog("Modo paisagem v5.8: SurfaceView GLES3, PM4 capturado no VdSwap; EDRAM/shaders Xenos ainda nao implementados.")
     }
     private fun exitGameMode(stop:Boolean){
         val overlay=gameOverlay?:return
@@ -503,6 +505,11 @@ class MainActivity : Activity() {
                     if(sent%(4*1024*1024)==0)uiLog("PE transferido: ${sent/1024/1024} MiB / ${size/1024/1024} MiB")
                 }
                 if(!continueRunning.get())return@execute
+                if(info.size>=6){
+                    val compat=nativeConfigureBootCr(info[5])
+                    uiLog("BOOT CR: $compat")
+                    if(!compat.startsWith("OK|"))throw IllegalStateException(compat)
+                }
                 val variableCatalog=nativeImportVariables()
                 if(variableCatalog!=null){
                     val variableStatus=nativeConfigureImportVariables(variableCatalog)
@@ -528,20 +535,17 @@ class MainActivity : Activity() {
                         telemetry.text="RAM virtual: 512 MiB | PE: ${size/1024/1024} MiB | IPS: $ips | PM4: parcial"
                         log(status)
                     }
-                    val state=Regex("GPU_RING=0x([0-9A-Fa-f]+); GPU_DWORDS=([0-9]+); SWAPS=([0-9]+)").find(status)
-                    if(state!=null && NATIVE_READY){
-                        val swaps=state.groupValues[3].toLongOrNull()?:0L
-                        val n=state.groupValues[2].toIntOrNull()?:0
-                        if(swaps!=lastSwap){
-                            lastSwap=swaps
-                            if(n in 1..4096){
-                                val address=state.groupValues[1].toLong(16)
-                                val raw=nativeReadSessionMemory(address,n*4)
-                                if(raw!=null){
-                                    val msg=try{nativeSubmitPm4Bytes(raw)}finally{raw.fill(0)}
-                                    uiLog("PM4/RAM: $msg")
-                                }
-                            }
+                    // Each VdSwap captures an immutable ring-buffer snapshot
+                    // in the Rust CPU worker; never re-read potentially modified
+                    // live ring memory at the next Android polling interval.
+                    if(NATIVE_READY){
+                        repeat(16){
+                            val raw=nativeDrainPm4Frame()?:return@repeat
+                            if(raw.isNotEmpty() && raw.size%4==0){
+                                val msg=try{nativeSubmitPm4Bytes(raw)}
+                                        finally{raw.fill(0)}
+                                if(!msg.contains("PM4 guest RAM:"))uiLog("PM4: $msg")
+                            }else raw.fill(0)
                         }
                     }
                     if(!last.startsWith("RUNNING|")){

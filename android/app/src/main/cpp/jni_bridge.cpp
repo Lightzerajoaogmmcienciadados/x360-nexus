@@ -1,5 +1,6 @@
 #include "xdvdfs.hpp"
 #include "xex_loader.hpp"
+#include "xenos_pm4.hpp"
 #include <jni.h>
 
 #include <cstdio>
@@ -191,6 +192,9 @@ Java_com_x360nexus_MainActivity_nativeInspectStagedXex(JNIEnv* env, jobject) {
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_x360nexus_MainActivity_nativePrepareStagedXex(JNIEnv* env, jobject) {
     try {
+        // Release CP before taking the PE memory lock: otherwise direct PM4
+        // guest reads could invert gpu_mutex -> memory_mutex lock order.
+        x360::gpu::processor().reset();
         std::lock_guard<std::mutex> lock(g_memory_mutex);
         if(!g_ram || !g_loaded_bytes) return java_string(env,"Primeiro carregue default.xex pelo botao 3.");
         if(g_raw_xex.empty()) {
@@ -207,6 +211,8 @@ Java_com_x360nexus_MainActivity_nativePrepareStagedXex(JNIEnv* env, jobject) {
         std::fill(pe.begin(),pe.end(),0); // discard host-side extracted image after staging
         g_prepared=std::move(prepared);
         g_ram=std::move(next);
+        // Inspect the immutable pre-patch descriptor snapshot before any
+        // thunk rewrite or variable binding. Do not invent expected counts.
         g_import_inventory=x360::xex::inspect_import_thunks(g_prepared->imports,
             g_prepared->base,g_prepared->image_size,*g_ram,g_prepared->executable_ranges);
         g_patched_thunks=x360::xex::patch_import_thunks(*g_import_inventory,
@@ -216,7 +222,9 @@ Java_com_x360nexus_MainActivity_nativePrepareStagedXex(JNIEnv* env, jobject) {
             "\nSecoes: "+std::to_string(g_prepared->sections.size())+
             "\nBibliotecas importadas: "+std::to_string(g_prepared->imports.size())+
             "\n"+g_import_inventory->describe()+
-            "\nThunks HLE de tipo 1 aplicados em seções executáveis: "+std::to_string(g_patched_thunks)+"\n"
+            "\nThunks HLE de tipo 1 aplicados em seções executáveis: "+std::to_string(g_patched_thunks)+
+            " (identificados="+std::to_string(g_import_inventory->thunks.size())+
+            "; verificados em .text; tipo1 brutos="+std::to_string(g_import_inventory->type1_records)+")\n"
             "CPU PowerPC v5.7 e PM4 experimental (sem traducao integral Xenos/GLSL).");
     } catch(const std::exception& e) {
         {
@@ -259,9 +267,10 @@ Java_com_x360nexus_MainActivity_nativePreparedInfo(JNIEnv* env,jobject){
     if(!g_prepared || !g_ram)return nullptr;
     const jlong data[]{static_cast<jlong>(g_prepared->base),static_cast<jlong>(g_prepared->pc),
         static_cast<jlong>(g_prepared->image_size),static_cast<jlong>(g_prepared->imports.size()),
-        static_cast<jlong>(g_ram->allocated_bytes())};
-    jlongArray out=env->NewLongArray(5);
-    if(out)env->SetLongArrayRegion(out,0,5,data);
+        static_cast<jlong>(g_ram->allocated_bytes()),
+        static_cast<jlong>(g_prepared->title_id)};
+    jlongArray out=env->NewLongArray(6);
+    if(out)env->SetLongArrayRegion(out,0,6,data);
     return out;
 }
 extern "C" JNIEXPORT jlongArray JNICALL
