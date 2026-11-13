@@ -12,10 +12,11 @@ pub struct Kernel{
     safe_stubs:BTreeSet<(String,u32)>,events:BTreeMap<u64,bool>, video_ready:bool,
     swaps:u64,display_mode:(u32,u32),
     gpu_ring_addr:u64, gpu_ring_dwords:u32,
+    gpu_pending_addr:u64, gpu_pending_dwords:u32,
     last_pad:crate::input::Controller,input_packet:u32,
 }
 impl Kernel {
-    pub fn new()->Self{Self{next_id:1,threads:BTreeMap::new(),ticks:0,next_tls:0,tls:BTreeMap::new(),next_heap:0,allocations:BTreeMap::new(),critical:BTreeMap::new(),safe_stubs:BTreeSet::new(),events:BTreeMap::new(),video_ready:false,swaps:0,display_mode:(1280,720),gpu_ring_addr:0,gpu_ring_dwords:0,last_pad:crate::input::Controller::default(),input_packet:0}}
+    pub fn new()->Self{Self{next_id:1,threads:BTreeMap::new(),ticks:0,next_tls:0,tls:BTreeMap::new(),next_heap:0,allocations:BTreeMap::new(),critical:BTreeMap::new(),safe_stubs:BTreeSet::new(),events:BTreeMap::new(),video_ready:false,swaps:0,display_mode:(1280,720),gpu_ring_addr:0,gpu_ring_dwords:0,gpu_pending_addr:0,gpu_pending_dwords:0,last_pad:crate::input::Controller::default(),input_packet:0}}
     pub fn create_thread(&mut self)->u32{let id=self.next_id;self.next_id=self.next_id.saturating_add(1);self.threads.insert(id,ThreadState::Ready);id}
     pub fn set_thread_state(&mut self,id:u32,state:ThreadState)->Result<(),&'static str>{*self.threads.get_mut(&id).ok_or("unknown thread")?=state;Ok(())}
     pub fn state(&self,id:u32)->Option<ThreadState>{self.threads.get(&id).copied()}
@@ -30,7 +31,15 @@ impl Kernel {
         self.next_heap=base;
         Ok(())
     }
-    pub fn gpu_ring_snapshot(&self)->(u64,u32,u64){(self.gpu_ring_addr,self.gpu_ring_dwords,self.swaps)}
+    pub fn gpu_ring_snapshot(&self)->(u64,u32,u64){
+        (if self.gpu_pending_dwords!=0 {self.gpu_pending_addr}else{self.gpu_ring_addr},
+         if self.gpu_pending_dwords!=0{self.gpu_pending_dwords}else{self.gpu_ring_dwords},
+         self.swaps)
+    }
+    pub fn capture_gpu_ring_write(&mut self,write:Option<(u32,u32)>){
+        self.gpu_pending_addr=write.map(|v|v.0 as u64).unwrap_or(0);
+        self.gpu_pending_dwords=write.map(|v|v.1).unwrap_or(0);
+    }
     pub fn register_secondary_stub(&mut self,library:&str,ordinal:u32)->Result<(),String>{
         if !matches!(library,"xboxkrnl.exe"|"xam.xex") || ordinal==0 {return Err("invalid HLE stub registration".into())}
         self.safe_stubs.insert((library.to_owned(),ordinal));Ok(())
@@ -113,6 +122,8 @@ impl Kernel {
                         .map_err(str::to_string)?;
                     self.gpu_ring_addr=at;
                 }
+                mem.track_gpu_ring(self.gpu_ring_addr as usize,65536)
+                    .map_err(str::to_string)?;
                 gpr[3]=self.gpu_ring_addr;
                 gpr[4]=65536;
                 return Ok(format!("VdGetSystemCommandBuffer test ring -> 0x{:X} (64KiB)",self.gpu_ring_addr));

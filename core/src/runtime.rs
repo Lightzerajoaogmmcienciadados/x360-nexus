@@ -331,6 +331,13 @@ impl Session {
                     }
                     self.cpu.pc=return_pc;
                     self.last_event=format!("{name} ordinal {ordinal}: {event}");
+                    if module==1 && ordinal==603 {
+                        let writes=self.mem.take_gpu_ring_writes();
+                        self.kernel.capture_gpu_ring_write(writes);
+                        if let Some((address,words))=writes {
+                            self.last_event=format!("{event}; PM4 guest write 0x{address:08X} ({words} dwords)");
+                        }
+                    }
                     if module==1 && ordinal==13 {
                         if !self.exec.iter().any(|&(lo,hi)|thread_entry>=lo &&
                               thread_entry.checked_add(4).is_some_and(|end|end<=hi)) {
