@@ -25,6 +25,21 @@ struct Headers {
     uint32_t file_format_offset=0;
     uint32_t file_format_size=0;
 };
+// XEX import records are *addresses in the loaded PE*, not ordinal IDs.
+// A type-0 record is a variable entry; type-1 is an executable thunk.
+struct ImportThunk {
+    uint32_t address=0;
+    uint32_t ordinal=0;
+    uint32_t module=0; // 1=xboxkrnl.exe, 2=xam.xex
+};
+struct ImportInventory {
+    std::vector<ImportThunk> thunks;
+    size_t records=0, variables=0, malformed=0, unsupported_libraries=0;
+    std::string describe() const;
+};
+ImportInventory inspect_import_thunks(const std::vector<ImportLibrary>& libs,
+    uint32_t image_base, uint32_t image_size, const x360::xdvdfs::GuestRam& ram);
+
 struct PeSection {
     std::string name;
     uint32_t virtual_address=0, virtual_size=0;
