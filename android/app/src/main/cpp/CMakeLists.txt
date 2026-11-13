@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22.1)
-project(x360_xdvdfs_android VERSION 5.2.0 LANGUAGES CXX)
+project(x360_xdvdfs_android VERSION 5.6.0 LANGUAGES CXX)
 add_library(x360xdvdfs SHARED xdvdfs.cpp xex_loader.cpp xex_crypto.cpp xex_lzx.cpp xex_imports.cpp xenos_pm4.cpp xenos_video.cpp gpu_pm4_jni.cpp jni_bridge.cpp gpu_settings.cpp)
 target_compile_features(x360xdvdfs PRIVATE cxx_std_20)
 target_compile_options(x360xdvdfs PRIVATE -Wall -Wextra -Wpedantic)

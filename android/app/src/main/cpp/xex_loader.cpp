@@ -87,6 +87,7 @@ void parse_imports(Bytes d,uint32_t off, Headers& h) {
         if(n>8192||40ull+uint64_t(n)*4>rec_size)throw std::runtime_error("Importacoes excessivas");
         ImportLibrary lib;
         lib.name=(name_index&0xFFu)<names.size()?names[name_index&0xFFu]:"biblioteca#"+std::to_string(name_index);
+        lib.name_index=name_index;
         lib.record_count=n;
         for(uint32_t j=0;j<n;++j) lib.guest_slots.push_back(be32(d,p+40+j*4));
         h.imports.push_back(std::move(lib));

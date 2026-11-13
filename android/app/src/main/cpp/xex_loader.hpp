@@ -14,7 +14,7 @@ namespace x360::xex {
 inline constexpr size_t kMaxXexBytes = 128ull * 1024 * 1024;
 inline constexpr size_t kMaxPeBytes = 128ull * 1024 * 1024;
 struct OptionalHeader { uint32_t key=0, value=0; };
-struct ImportLibrary { std::string name; uint32_t record_count=0; std::vector<uint32_t> guest_slots; };
+struct ImportLibrary { std::string name; uint16_t name_index=0; uint32_t record_count=0; std::vector<uint32_t> guest_slots; };
 struct Headers {
     uint32_t module_flags=0, pe_offset=0, security_offset=0;
     uint32_t image_base=0, entry_point=0, image_size=0;
