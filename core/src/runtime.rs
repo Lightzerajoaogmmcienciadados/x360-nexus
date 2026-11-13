@@ -9,6 +9,84 @@ const GUEST_SIZE:usize=512*1024*1024;
 const MAX_IMAGE:usize=128*1024*1024;
 const UPLOAD_CHUNK:usize=64*1024;
 const TEST_ABI:u64=0x5845_0000;
+const MAIN_STACK_BOTTOM:u64=0x7001_0000; // guard: 0x70000000..0x7000FFFF
+const MAIN_STACK_TOP:u64=0x7010_0000;
+const MAIN_PCR:u64=0x7100_0000;
+const MAIN_THREAD:u64=0x7100_1000;
+const MAIN_TLS:u64=0x7101_0000;
+
+/// Limited user-mode bootstrap model based on known Xbox 360 KPCR offsets.
+/// It is not the complete kernel KTHREAD/TEB initialization sequence.
+fn setup_main_thread(mem:&mut Memory,cpu:&mut Cpu)->Result<(),String>{
+    const RW:u8=Memory::READ|Memory::WRITE;
+    mem.set_page_permissions(MAIN_STACK_BOTTOM,(MAIN_STACK_TOP-MAIN_STACK_BOTTOM) as usize,RW)
+        .map_err(str::to_string)?;
+    mem.set_page_permissions(MAIN_PCR,0x3000,RW).map_err(str::to_string)?;
+    mem.set_page_permissions(MAIN_TLS,0x4000,RW).map_err(str::to_string)?;
+    // X_KPCR fields are guest big endian.
+    mem.write_u32_be(MAIN_PCR as usize,MAIN_TLS as u32).map_err(str::to_string)?; // +0 TLS
+    mem.write_u32_be((MAIN_PCR+0x30) as usize,MAIN_PCR as u32).map_err(str::to_string)?;
+    mem.write_u32_be((MAIN_PCR+0x70) as usize,MAIN_STACK_TOP as u32).map_err(str::to_string)?;
+    mem.write_u32_be((MAIN_PCR+0x74) as usize,MAIN_STACK_BOTTOM as u32).map_err(str::to_string)?;
+    mem.write_u32_be((MAIN_PCR+0x100) as usize,MAIN_THREAD as u32).map_err(str::to_string)?;
+    // Minimal guest KTHREAD metadata, not a commercial KTHREAD ABI.
+    mem.write_u32_be((MAIN_THREAD+0x5C) as usize,MAIN_STACK_TOP as u32).map_err(str::to_string)?;
+    mem.write_u32_be((MAIN_THREAD+0x60) as usize,MAIN_STACK_BOTTOM as u32).map_err(str::to_string)?;
+    mem.write_u32_be((MAIN_THREAD+0x68) as usize,MAIN_TLS as u32).map_err(str::to_string)?;
+    mem.write_u32_be((MAIN_THREAD+0x14C) as usize,1).map_err(str::to_string)?;
+    cpu.gpr[1]=MAIN_STACK_TOP-0x100; // 16-byte aligned, guard below stack
+    cpu.gpr[13]=MAIN_PCR;
+    cpu.gpr[3]=0;cpu.gpr[4]=0;cpu.gpr[5]=0;cpu.gpr[6]=0;
+    Ok(())
+}
+
+fn setup_additional_thread(mem:&mut Memory,cpu:&mut Cpu,id:u32)->Result<(),String>{
+    if !(2..=8).contains(&id){return Err("thread count exhausted".into())}
+    let base=0x7200_0000u64 + (id as u64)*0x40000;
+    let pcr=0x7300_0000u64+(id as u64)*0x10000;
+    let tls=pcr+0x3000;
+    let thread=pcr+0x1000;
+    const RW:u8=Memory::READ|Memory::WRITE;
+    mem.set_page_permissions(base+0x1000,0x3F000,RW).map_err(str::to_string)?;
+    mem.set_page_permissions(pcr,0x4000,RW).map_err(str::to_string)?;
+    for (off,value) in [(0,tls as u32),(0x30,pcr as u32),(0x70,(base+0x40000) as u32),
+                        (0x74,(base+0x1000) as u32),(0x100,thread as u32)] {
+        mem.write_u32_be((pcr+off) as usize,value).map_err(str::to_string)?;
+    }
+    mem.write_u32_be((thread+0x14C) as usize,id).map_err(str::to_string)?;
+    cpu.gpr[1]=base+0x40000-0x100;cpu.gpr[13]=pcr;
+    Ok(())
+}
+
+fn fault_instruction(cpu:&Cpu,word:u32)->String {
+    let op=word>>26;let rt=(word>>21)&31;let ra=((word>>16)&31) as usize;
+    let rb=((word>>11)&31) as usize;
+    let disp=word as u16 as i16 as i64;
+    let dname=match op {
+        32=>"lwz",33=>"lwzu",34=>"lbz",36=>"stw",37=>"stwu",38=>"stb",
+        40=>"lhz",44=>"sth",48=>"lfs",50=>"lfd",52=>"stfs",54=>"stfd",_=>"",
+    };
+    if !dname.is_empty(){
+        let base=if ra==0 {0} else {cpu.gpr[ra]};
+        let ea=base.wrapping_add(disp as u64);
+        return format!("DISASM={dname} r{rt},{disp}(r{ra}) EA=0x{ea:08X} BASE=r{ra}=0x{base:016X}");
+    }
+    if op==58||op==62{
+        let base=if ra==0{0}else{cpu.gpr[ra]};
+        let d=((word&0xFFFC) as i16) as i64;
+        let ea=base.wrapping_add(d as u64);
+        return format!("DISASM={} r{rt},{d}(r{ra}) EA=0x{ea:08X}",if op==58{"ld"}else{"std"});
+    }
+    if op==31 {
+        let xo=(word>>1)&1023;
+        if matches!(xo,23|151|87|215|279|407) {
+            let ea=cpu.gpr[ra].wrapping_add(cpu.gpr[rb]);
+            return format!("DISASM=X-form XO={xo} r{rt},r{ra},r{rb} EA=0x{ea:08X}");
+        }
+        return format!("DISASM=extended PowerPC XO={xo}");
+    }
+    format!("DISASM=PowerPC primary opcode={op}")
+}
 
 pub struct Session {
     cpu:Cpu, mem:Memory, kernel:Kernel, exec:Vec<(usize,usize)>, scheduler:Scheduler,
@@ -38,10 +116,11 @@ impl Session {
         for &(low,high) in &exec {
             mem.set_page_permissions(low as u64,high-low,Memory::READ|Memory::EXECUTE).map_err(str::to_string)?;
         }
-        // Temporary test stack. A real Xbox 360 stack comes from kernel thread setup.
-        mem.set_page_permissions(GUEST_BASE+GUEST_SIZE as u64-1024*1024,1024*1024,Memory::READ|Memory::WRITE).map_err(str::to_string)?;
-        let mut cpu=Cpu::new();cpu.pc=entry as usize;cpu.gpr[1]=GUEST_BASE+GUEST_SIZE as u64-0x1000;
-        Ok(Self{cpu,mem,kernel:Kernel::new(),exec,scheduler:Scheduler::new(),image_base:base,
+        let mut cpu=Cpu::new();cpu.pc=entry as usize;
+        setup_main_thread(&mut mem,&mut cpu)?;
+        let mut kernel=Kernel::new();
+        kernel.set_guest_heap_base(0x2000_0000)?;
+        Ok(Self{cpu,mem,kernel,exec,scheduler:Scheduler::new(),image_base:base,
             image_size:size,loaded:0,steps:0,paused:None,last_event:String::new(),last_ips:0.0,
             imports:BTreeMap::new()})
     }
@@ -126,15 +205,19 @@ impl Session {
                             if !self.exec.iter().any(|&(lo,hi)|requested_entry>=lo&&requested_entry.checked_add(4).is_some_and(|end|end<=hi)){
                                 return Err(format!("ExCreateThread invalid entry 0x{requested_entry:08X}"));
                             }
-                            let id=self.scheduler.spawn(requested_entry)?;
-                            self.last_event=format!("{event}; diagnostic task {id}");
+                            let mut thread_cpu=Cpu::new();thread_cpu.pc=requested_entry;
+                            // Prepare a separate stack and PCR before scheduling.
+                            let future_id=self.scheduler.next_guest_id();
+                            setup_additional_thread(&mut self.mem,&mut thread_cpu,future_id)?;
+                            let id=self.scheduler.spawn_cpu(thread_cpu)?;
+                            self.last_event=format!("{event}; cooperative guest thread {id}");
                         }else{self.last_event=event;}
                         Ok(())
                     })
                 }
             }else{self.cpu.step_mut(&mut self.mem)};
             if let Err(e)=result{
-                self.paused=Some(format!("PARADA: {e} | PC=0x{pc:08X} OP={opcode:08X}"));break;
+                self.paused=Some(format!("PARADA: {e} | PC=0x{pc:08X} OP={opcode:08X} | {}",fault_instruction(&self.cpu,opcode)));break;
             }
             count+=1;self.steps=self.steps.saturating_add(1);
             self.kernel.tick();self.scheduler.tick(&mut self.cpu);
@@ -158,7 +241,10 @@ impl Session {
         if !reason.is_empty(){let _=writeln!(s,"{reason}");}
         if !self.last_event.is_empty(){let _=writeln!(s,"HLE: {}",self.last_event);}
         if let Ok(w)=self.mem.read_u32_be(self.cpu.pc){let _=writeln!(s,"Proximo opcode=0x{w:08X}");}
-        for reg in 3..=10{let _=writeln!(s,"r{reg}=0x{:016X}",self.cpu.gpr[reg]);}
+        let _=writeln!(s,"CONTEXT: SP=r1=0x{:016X}; KPCR=r13=0x{:016X}; TLS=0x{MAIN_TLS:08X}",self.cpu.gpr[1],self.cpu.gpr[13]);
+        for reg in [1,3,4,5,6,10,11,13,30,31] {
+            let _=writeln!(s,"r{reg}=0x{:016X}",self.cpu.gpr[reg]);
+        }
         s
     }
 }
@@ -313,5 +399,26 @@ pub extern "system" fn Java_com_x360nexus_MainActivity_nativeReadSessionMemory(
         let base=0x82000000_i64;
         let mut s=Session::create(vec![0x60,0,0,0],base as u64,base as u64,&[base,base+4]).unwrap();
         assert!(s.set_import_catalog(&[base,1,338]).is_err());
+    }
+}
+
+#[cfg(test)] mod xbox_thread_boot_tests {
+    use super::*;
+    #[test] fn creates_stack_pcr_and_tls_before_guest_execution(){
+        let s=Session::create(vec![0x60,0,0,0],0x82000000,0x82000000,&[0x82000000,0x82000004]).unwrap();
+        assert_eq!(s.cpu.gpr[1]&15,0);
+        assert_eq!(s.cpu.gpr[13],MAIN_PCR);
+        assert_eq!(s.mem.read_u32_be(MAIN_PCR as usize).unwrap(),MAIN_TLS as u32);
+        assert_eq!(s.mem.read_u32_be((MAIN_PCR+0x100) as usize).unwrap(),MAIN_THREAD as u32);
+        assert!(s.mem.read_u32_be(0x70000000).is_err());
+    }
+    #[test] fn missing_base_register_reports_effective_address(){
+        // nop; lwz r11,0x94(r30) -- intentionally zero r30.
+        let code=[0x60,0,0,0,0x81,0x7E,0,0x94];
+        let mut s=Session::create(code.to_vec(),0x82000000,0x82000000,&[0x82000000,0x82000008]).unwrap();
+        let report=s.step_chunk(2);
+        assert!(report.contains("EA=0x00000094"),"{report}");
+        assert!(report.contains("r30=0x0000000000000000"),"{report}");
+        assert!(report.contains("PARADA:"),"{report}");
     }
 }
