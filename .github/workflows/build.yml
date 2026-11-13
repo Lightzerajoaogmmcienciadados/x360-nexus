@@ -43,7 +43,7 @@ jobs:
       - name: Build Windows GUI EXE
         shell: pwsh
         run: |
-          cargo build --locked --release --bin x360-galaxy --target x86_64-pc-windows-msvc
+          cargo build --release --bin x360-galaxy --target x86_64-pc-windows-msvc
           if ($LASTEXITCODE -ne 0) { throw "Windows GUI compilation failed" }
 
       - name: Verify native Windows executable
