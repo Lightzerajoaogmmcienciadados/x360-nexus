@@ -2,7 +2,7 @@
 //! This is a guest-memory bridge, NOT a commercial Xenon execution environment:
 //! imports, exception handling, MMIO, VMX128 and actual Xbox kernel are incomplete.
 use crate::{cpu::Cpu,kernel::Kernel,memory::Memory,scheduler::Scheduler};
-use jni::{JNIEnv,objects::{JByteArray,JLongArray,JObject},sys::{jint,jlong,jstring}};
+use jni::{JNIEnv,objects::{JByteArray,JLongArray,JObject},sys::{jbyteArray,jint,jlong,jstring}};
 use std::{fmt::Write,sync::{Mutex,OnceLock,atomic::{AtomicBool,AtomicU64,Ordering}},time::Instant,thread};
 const GUEST_BASE:u64=0x8200_0000;
 const GUEST_SIZE:usize=512*1024*1024;
@@ -59,6 +59,12 @@ impl Session {
         Ok(())
     }
     pub fn ready(&self)->bool{self.loaded==self.image_size}
+    pub fn read_guest_bytes(&self,address:u64,length:usize)->Result<Vec<u8>,String>{
+        if !self.ready() || length==0 || length>16384 || address>u32::MAX as u64 {
+            return Err("guest read disabled, uninitialized or too large".into());
+        }
+        self.mem.read(address as usize,length).map_err(str::to_string)
+    }
     pub fn step_chunk(&mut self,limit:usize)->String {
         if !self.ready(){return format!("PAUSED|PE incompleto: {}/{} bytes",self.loaded,self.image_size);}
         if let Some(reason)=&self.paused{return self.report("PAUSED",reason);}
@@ -73,7 +79,7 @@ impl Session {
             };
             let result=if opcode>>26==17 {
                 let service=self.cpu.gpr[0];
-                if !(TEST_ABI+1..=TEST_ABI+19).contains(&service){
+                if !(TEST_ABI+1..=TEST_ABI+23).contains(&service){
                     Err(format!("sc sem kernel Xbox HLE: r0=0x{service:X}; import/ordinal nao resolvido"))
                 }else{
                     let service_id=(service-TEST_ABI) as u32;
@@ -111,6 +117,8 @@ impl Session {
         let mut s=format!("{status}|IPS={:.0}; INSTRUCOES={}; PC=0x{:08X}; LR=0x{:016X}; CTR=0x{:016X}; RAM_COMMIT={} KiB\n",
             self.last_ips,self.steps,self.cpu.pc,self.cpu.lr,self.cpu.ctr,self.mem.committed_bytes()/1024);
         let _=writeln!(s,"THREAD={} / {} (agendador de teste)",self.scheduler.current_id(),self.scheduler.threads());
+        let (ring,words,swaps)=self.kernel.gpu_ring_snapshot();
+        let _=writeln!(s,"GPU_RING=0x{ring:08X}; GPU_DWORDS={words}; SWAPS={swaps}");
         if !reason.is_empty(){let _=writeln!(s,"{reason}");}
         if !self.last_event.is_empty(){let _=writeln!(s,"HLE: {}",self.last_event);}
         if let Ok(w)=self.mem.read_u32_be(self.cpu.pc){let _=writeln!(s,"Proximo opcode=0x{w:08X}");}
@@ -198,6 +206,19 @@ pub extern "system" fn Java_com_x360nexus_MainActivity_nativeStopSession(env:JNI
     GENERATION.fetch_add(1,Ordering::SeqCst);ACTIVE.store(false,Ordering::SeqCst);
     let msg=match state().lock(){Ok(mut g)=>{if let Some(s)=g.as_mut(){s.halt();}"PAUSED|CPU interrompida".into()},Err(_)=>"PAUSED|mutex poisoned".into()};output(env,msg)
 }
+// PM4 inspection reads only a bounded slice from the active Rust guest RAM.
+// No host pointer or large snapshot crosses the JNI boundary.
+#[no_mangle]
+pub extern "system" fn Java_com_x360nexus_MainActivity_nativeReadSessionMemory(
+    env:JNIEnv,_:JObject,address:jlong,length:jint)->jbyteArray {
+    if address<0 || length<=0 || length>16384{return std::ptr::null_mut();}
+    let content=state().lock().ok().and_then(|guard|guard.as_ref()
+        .and_then(|session|session.read_guest_bytes(address as u64,length as usize).ok()));
+    match content.and_then(|bytes|env.byte_array_from_slice(&bytes).ok()) {
+        Some(arr)=>arr.into_raw(),None=>std::ptr::null_mut()
+    }
+}
+
 #[cfg(test)]mod tests{use super::*;
  #[test]fn startup_and_diagnostics(){
   let code=vec![0x38,0x60,0,5,0x38,0x80,0,7,0x7c,0xa3,0x22,0x14,0xff,0xff,0xff,0xff];
