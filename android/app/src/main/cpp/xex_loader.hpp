@@ -35,10 +35,18 @@ struct ImportThunk {
 struct ImportInventory {
     std::vector<ImportThunk> thunks;
     size_t records=0, variables=0, malformed=0, unsupported_libraries=0;
+    size_t unrecognized_types=0, uninitialized=0;
+    std::vector<std::string> examples; // first eight unknown descriptors, never keys
+
     std::string describe() const;
 };
 ImportInventory inspect_import_thunks(const std::vector<ImportLibrary>& libs,
     uint32_t image_base, uint32_t image_size, const x360::xdvdfs::GuestRam& ram);
+// Patch only proven type-1 XEX2 executable thunk slots, never unknown records.
+// The Rust CPU uses the separate module/ordinal catalog to dispatch HLE.
+size_t patch_import_thunks(const ImportInventory& inv,
+    const std::vector<std::pair<uint32_t,uint32_t>>& executable_ranges,
+    x360::xdvdfs::GuestRam& ram);
 
 struct PeSection {
     std::string name;
