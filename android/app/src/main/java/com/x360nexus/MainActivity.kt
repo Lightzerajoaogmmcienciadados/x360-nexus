@@ -355,7 +355,7 @@ class MainActivity : Activity() {
         enterGameMode()
         startSelected()
     }
-    private fun setImmersive(enabled:Boolean){
+    private fun configureImmersiveUi(enabled:Boolean){
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility=if(enabled){
             View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_FULLSCREEN or
@@ -386,7 +386,7 @@ class MainActivity : Activity() {
     private fun enterGameMode(){
         if(gameOverlay!=null)return
         requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        setImmersive(true)
+        configureImmersiveUi(true)
         val root=findViewById<FrameLayout>(android.R.id.content)
         val overlay=LayoutInflater.from(this).inflate(R.layout.activity_game,root,false)
         root.addView(overlay,ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT))
@@ -434,7 +434,7 @@ class MainActivity : Activity() {
         if(stop){continueRunning.set(false);if(RUST_READY)worker.execute{uiLog(nativeStopSession())}}
         (overlay.parent as? ViewGroup)?.removeView(overlay)
         requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        setImmersive(false)
+        configureImmersiveUi(false)
         val mainSurface=findViewById<SurfaceView>(R.id.videoSurface)
         if(mainSurface.holder.surface.isValid){
             videoWorker.execute{if(NATIVE_READY)nativeSetVideoSurface(mainSurface.holder.surface)}
