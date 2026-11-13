@@ -48,14 +48,40 @@ void parse_imports(Bytes d,uint32_t off, Headers& h) {
         if(stop==str_end || stop==cursor || stop-cursor>255)
             throw std::runtime_error("XEX2 import library string invalid");
         names.emplace_back(reinterpret_cast<const char*>(d.data()+cursor),stop-cursor);
-        const size_t next=(stop-str_at+4u)&~size_t(3);
-        cursor=str_at+next;
-        if(cursor>str_end)throw std::runtime_error("XEX2 import name padding exceeded table");
+        // Every name *except possibly the last* is padded to a four-byte
+        // boundary relative to string_table.data. The table byte size is
+        // authoritative: do not seek beyond it to guess a record boundary.
+        const size_t past_nul=stop+1;
+        const size_t aligned=str_at+((past_nul-str_at+3u)&~size_t(3));
+        if(i+1<count){
+            if(aligned>str_end)throw std::runtime_error("XEX2 import name padding exceeded table");
+            cursor=aligned;
+        }else{
+            cursor=aligned<=str_end?aligned:past_nul;
+        }
     }
-    size_t p=(str_end+3u)&~size_t(3);
+    // Reject non-zero stray string-table bytes to avoid consuming a truncated
+    // library record as part of a name. Optional trailing NUL padding is fine.
+    if(cursor<str_end && !std::all_of(d.begin()+static_cast<std::ptrdiff_t>(cursor),
+                                      d.begin()+static_cast<std::ptrdiff_t>(str_end),
+                                      [](uint8_t b){return b==0;}))
+        throw std::runtime_error("XEX2 import string table contains unexpected bytes");
+    // Xenia's xex2_opt_import_libraries layout starts library records at
+    // offset 12 + string_table.size, even if that size is *not* aligned.
+    // Rounding the absolute offset can silently read another 1..3 bytes as
+    // the record length, corrupting its name and guest import slot addresses.
+    size_t p=str_end;
     for(uint32_t i=0;p<end && i<128;++i){
         if(p+40>end) throw std::runtime_error("Registro de importacao XEX truncado");
         uint32_t rec_size=be32(d,p);
+        // A zero size marks unused alignment space at the tail of the list.
+        if(rec_size==0) {
+            if(std::any_of(d.begin()+static_cast<std::ptrdiff_t>(p),
+                           d.begin()+static_cast<std::ptrdiff_t>(end),
+                           [](uint8_t b){return b!=0;}))
+                throw std::runtime_error("Import table tail is not empty");
+            break;
+        }
         if(rec_size<40||rec_size>end-p) throw std::runtime_error("Tamanho de registro de imports invalido");
         uint16_t name_index=be16(d,p+36), n=be16(d,p+38);
         if(n>8192||40ull+uint64_t(n)*4>rec_size)throw std::runtime_error("Importacoes excessivas");
