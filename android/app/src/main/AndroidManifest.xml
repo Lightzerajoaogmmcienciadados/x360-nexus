@@ -3,7 +3,7 @@
     <uses-feature android:glEsVersion="0x00020000" android:required="true" />
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
     <application
-        android:label="X360 GALAXY v5.2"
+        android:label="X360 GALAXY v5.3"
         android:icon="@drawable/galaxy_icon"
         android:allowBackup="false"
         android:supportsRtl="true"

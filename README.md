@@ -1,36 +1,18 @@
-# X360 GALAXY v5.2 — PM4 guest-memory bridge, partial HLE, protected key input
+# X360: GALAXY v5.3 — XEX Basic/AES automation + import thunk diagnostics
 
-Incremental update of the working v5.1 XEX2/ISO/AES/LZX/CPU stack. The existing source is preserved.
+## Added
 
-## New in v5.2
+- Automatic preparation of selected ISO/default.xex on selection and after a valid external 16-byte key is entered, with explicit `PE preparado = true` only after successful AES, Basic/LZX and section mapping.
+- C++ decoder of XEX2 imports: distinguishes 32-bit variable records from 16-byte function thunks in the mapped PE. Bounds checks and per-library/ordinal reporting; rejects malformed locations and unsupported libraries.
+- JNI thunk catalog transferred to Rust CPU before launch; PowerPC interpreter intercepts known import thunk PC values and reports exact ordinal, library, PC and opcode on unsupported functions.
+- Only narrow `xboxkrnl.exe` TLS ordinals 338/340/341 delegate to existing single-thread HLE. **This does not imply commercial ABI accuracy or multi-thread TLS fidelity.** Other imports stop explicitly; `r3=0` is never fabricated for unknown calls.
+- The existing guest PM4 parser, Android EGL surface, Rust CPU worker, AES and Basic zero-fill decompressor are preserved.
+- CTest for synthetic XEX import records; Android ARM64 CI updated to v5.3.
 
-- **Private hexadecimal XEX key entry**: Android dialog validates precisely 32 hex digits, accepts a user-provided 16-byte key, never prints the key or embeds keys in the APK. The optional `keys.bin` reader still works.
-- **Encrypted persistence**: AndroidKeyStore generates an AES-256-GCM wrapping key. SharedPreferences stores **only authenticated ciphertext and IV**, never a plaintext key or its hex form. Keys can become unreadable after OS reset/Keystore changes and must be re-entered. `allowBackup=false` remains enabled.
-- **PM4**: safe Type 0/2/3 parser now recognizes `LOAD_ALU_CONSTANT (0x2F)` with bounded, injected guest-memory reader, Type 3 NOP, and shader register constants. No guest shader translation is claimed; unsupported DRAW_INDX is logged. Tests include valid/invalid memory reads.
-- **Rust RAM -> PM4 C++**: `nativeReadSessionMemory` provides bounded 16-KiB guest-memory reads; `nativeSubmitPm4Bytes` decodes big-endian DWORDs from the current CPU session. There is no unrestricted guest memory pointer or 512-MiB copy.
-- **Guest command ring for original test software only**: private HLE service 20 maps 64 KiB at `0x9F000000`; service 21 sets the number of submitted DWORDs (up to 4096); existing service 15 VdSwap increments its counter. Kotlin observes the new `GPU_RING`, `GPU_DWORDS`, and `SWAPS` diagnostics and submits readable packets to C++ when the swap count advances.
-- **Additional *private test ABI* services**: service 22 reports an offline local test profile (no Xbox authentication); 23 yields to host thread. These are not Xbox 360 ordinals, and real `xboxkrnl.exe` / `xam.xex` HLE is still missing.
-- **Android**: v5.2 name/version and protection against plaintext key storage; same EGL / GLES diagnostic video surface and controller overlay.
+## Not implemented
 
-## Current limitations — important
+- 296 fully working xboxkrnl/xam exports (276 + 20 are **import-table records**, not automatically callable functions).
+- CPU instruction completeness, real Xbox kernel thread/file/MMIO behavior, Xenos shaders, EDRAM, real textures/geometry or gameplay of Minecraft.
+- No retail keys or game data distributed. User-provided encrypted key remains in Android Keystore.
 
-This is **not** a compatible Xbox 360 game emulator. Commercial ISO boot is not proven and Minecraft/Forza will not run correctly. A complete Xenos shader translator, Xenos register/MMIO/DMA interception, EDRAM resolves, real shader fetching, textures and fully functional `xboxkrnl/xam` ordinal IAT are **not implemented**. The GLES triangle is an original diagnostic shader; PM4 constants affect only test visualization. Vulkan remains a setting request, not an active backend. We do **not** claim it is a real game frame.
-
-A game cannot be made to work by returning zero for unknown imports: unsupported calls must be visible and execution paused. No built-in retail/devkit keys, games or firmware are distributed.
-
-## Build
-
-`cmake -S . -B build/host && cmake --build build/host && ctest --test-dir build/host --output-on-failure`
-
-Android ARM64 APK is built by `.github/workflows/build-x360-android-apk.yml` (Java 17, Rust stable, Android SDK 35, NDK 27.2.12479018, CMake 3.22.1, Gradle 8.10.2).
-
-## Updated files
-
-- `android/app/src/main/java/com/x360nexus/SecretKeyStore.kt` (new)
-- `android/app/src/main/java/com/x360nexus/MainActivity.kt`
-- `android/app/src/main/cpp/xenos_pm4.{hpp,cpp}`, `gpu_pm4_jni.cpp`, `xenos_video.cpp`
-- `core/src/kernel.rs`, `core/src/runtime.rs`
-- `tests/pm4_tests.cpp`
-- Android manifest, layout, Gradle, CMakeLists, Cargo.toml, workflow, README
-
-Reference for actual PM4 opcode values and register classes: [Xenia GPU/Xenos](https://github.com/xenia-project/xenia/blob/master/src/xenia/gpu/xenos.h) and its [command processor](https://github.com/xenia-project/xenia/blob/master/src/xenia/gpu/command_processor.cc).
+Use legal test executables; CI verifies build, not retail game compatibility.

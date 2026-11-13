@@ -58,6 +58,8 @@ class MainActivity : Activity() {
     private external fun nativeUploadSessionChunk(address:Long,data:ByteArray):String
     private external fun nativeLaunchSession():String
     private external fun nativePollSession():String
+    private external fun nativeImportThunks():LongArray?
+    private external fun nativeConfigureImportThunks(entries:LongArray):String
     private external fun nativeSetXexKey(bytes:ByteArray):String
     private external fun nativeClearXexKey():String
     private external fun nativeStartSession(image:ByteArray,base:Long,entry:Long,ranges:LongArray):String
@@ -119,6 +121,7 @@ class MainActivity : Activity() {
     private lateinit var vsync:CheckBox
     private lateinit var showFps:CheckBox
     private var busy=false
+    @Volatile private var preparedUri:Uri?=null
     private var logBuffer=""
     private var currentGpu="GPU ainda não detectada"
     private var lastSwap=0L
@@ -229,13 +232,14 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.consoleToggle).setOnClickListener {
             console.visibility=if(console.visibility==View.VISIBLE)View.GONE else View.VISIBLE
         }
-        log("v5.2: Rust JNI=${RUST_READY}, C++ JNI=${NATIVE_READY}. CPU nativa + memória esparsa. Kernel e GPU Xenos ainda parciais.")
+        log("v5.3: Rust JNI=${RUST_READY}, C++ JNI=${NATIVE_READY}. XEX AES/Basic e imports verificados; GPU Xenos ainda incompleta.")
         worker.execute {
             val info=GpuDetector.query(this)
             currentGpu="${info.family}\n${info.renderer}\nOpenGL ES: ${info.version}\nVulkan: ${info.vulkan}"
             val msg=if(NATIVE_READY) nativeSetGpuCapabilities(info.renderer,info.version,info.vulkan) else "JNI C++ indisponível"
             runOnUiThread {gpuText.text=currentGpu;log(msg);saveSettings()}
         }
+        if(selected!=null && NATIVE_READY) schedulePreparation("ISO restaurada")
     }
     private fun restoreXexKey() {
         if(!NATIVE_READY)return
@@ -279,10 +283,12 @@ class MainActivity : Activity() {
                 input.text.clear()
                 try {
                     val result=nativeSetXexKey(raw)
+                    preparedUri=null
                     if(result.contains("carregada")) {
                         SecretKeyStore.save(this,raw)
                         log("Chave hexadecimal aplicada (16 bytes) e salva cifrada")
                         dlg.dismiss()
+                        schedulePreparation("chave hexadecimal")
                     }else {log(result)}
                 }catch(_:Exception){log("Falha aplicando chave; dados não foram exibidos")}
                 finally {raw.fill(0)}
@@ -291,6 +297,36 @@ class MainActivity : Activity() {
         dlg.show()
     }
 
+    /** Attempts XEX preparation immediately after ISO or key selection.
+     *  No game code is launched by this operation. */
+    private fun prepareIsoOnWorker(iso:Uri):LongArray {
+        val load=contentResolver.openFileDescriptor(iso,"r")?.use {fd ->
+            nativeLoadDefaultXex(fd.fd)
+        }?:throw IllegalStateException("Nao foi possivel abrir a ISO")
+        if(!load.startsWith("default.xex armazenado"))throw IllegalStateException(load)
+        uiLog(load)
+        uiLog(nativeInspectStagedXex())
+        val result=nativePrepareStagedXex()
+        uiLog(result)
+        val info=nativePreparedInfo()
+            ?:throw IllegalStateException("PE nao preparado: confira a chave AES, Basic/LZX e a integridade do XEX")
+        preparedUri=iso
+        return info
+    }
+    private fun schedulePreparation(trigger:String){
+        if(!NATIVE_READY || busy)return
+        val iso=selected?:return
+        preparedUri=null
+        setBusy(true)
+        worker.execute {
+            try {
+                uiLog("Preparacao XEX automatica: $trigger")
+                prepareIsoOnWorker(iso)
+                uiLog("PE preparado = true. Toque INICIAR para iniciar a CPU e diagnosticar imports.")
+            }catch(e:Throwable){preparedUri=null;uiLog("PREPARACAO XEX: ${e.message}")}
+            finally{runOnUiThread{setBusy(false)}}
+        }
+    }
     private fun startSelected(){
         lastSwap=0
         if(busy || !NATIVE_READY || !RUST_READY){log("Bibliotecas indisponíveis ou execução já iniciada.");return}
@@ -298,14 +334,9 @@ class MainActivity : Activity() {
         setBusy(true);continueRunning.set(true)
         worker.execute {
             try {
-                contentResolver.openFileDescriptor(iso,"r")?.use { fd ->
-                    uiLog(nativeLoadDefaultXex(fd.fd))
-                }?:throw IllegalStateException("Não foi possível abrir a ISO")
+                val info=if(preparedUri==iso)nativePreparedInfo()?:prepareIsoOnWorker(iso)
+                    else prepareIsoOnWorker(iso)
                 if(!continueRunning.get())return@execute
-                uiLog(nativeInspectStagedXex())
-                val preparation=nativePrepareStagedXex()
-                uiLog(preparation)
-                val info=nativePreparedInfo()?:throw IllegalStateException("PE não preparado: verifique AES/LZX e imports")
                 val ranges=nativeExecutableRanges()?:throw IllegalStateException("Secoes executaveis inválidas")
                 // Transfer the prepared PE in 64-KiB blocks. Sparse RAM is owned
                 // by the Rust CPU; Java never holds the whole PE as a byte array.
@@ -326,6 +357,11 @@ class MainActivity : Activity() {
                     if(sent%(4*1024*1024)==0)uiLog("PE transferido: ${sent/1024/1024} MiB / ${size/1024/1024} MiB")
                 }
                 if(!continueRunning.get())return@execute
+                val catalog=nativeImportThunks()
+                if(catalog!=null){
+                    val configured=nativeConfigureImportThunks(catalog)
+                    uiLog("IMPORTS: $configured")
+                }else uiLog("IMPORTS: catalogo indisponivel")
                 val launched=nativeLaunchSession()
                 uiLog(launched)
                 if(!launched.startsWith("OK|"))return@execute
@@ -378,7 +414,8 @@ class MainActivity : Activity() {
             }}catch(_:Exception){}
             games.removeAll{it.uri==uri};games.add(0,Game(uri,name))
             while(games.size>12)games.removeAt(games.lastIndex)
-            selected=uri;persistGames();renderGames();log("ISO adicionada: $name")
+            selected=uri;preparedUri=null;persistGames();renderGames();log("ISO adicionada: $name")
+            schedulePreparation("ISO selecionada")
         } else if(requestCode==PICK_KEY){
             if(busy)return
             worker.execute{
@@ -393,6 +430,7 @@ class MainActivity : Activity() {
                         val key=buf.copyOfRange(0,16)
                         try {
                             val response=nativeSetXexKey(key)
+                            preparedUri=null
                             if(response.contains("carregada")) {
                                 SecretKeyStore.save(this, key)
                                 "Chave carregada e armazenada cifrada no AndroidKeyStore"
@@ -401,6 +439,9 @@ class MainActivity : Activity() {
                     }
                 }catch(e:Throwable){"Falha lendo chave: ${e.message}"}finally{buf.fill(0)}
                 uiLog(message)
+                if(message.contains("armazenada cifrada"))runOnUiThread {
+                    schedulePreparation("keys.bin")
+                }
             }
         }
     }

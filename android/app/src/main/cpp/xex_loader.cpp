@@ -121,7 +121,8 @@ std::string describe(const Headers& h){
      <<"\nCompression: "<<h.compression<<" (0=none,1=basic,2=LZX)"
      <<"\nOptional headers: "<<h.options.size()
      <<"\nImport libraries: "<<h.imports.size();
-    for(const auto& lib:h.imports) s<<"\n  "<<lib.name<<" ("<<lib.record_count<<" registros; stub nao resolvido)";
+    for(const auto& lib:h.imports) s<<"\n  "<<lib.name<<" ("<<lib.record_count
+        <<" registros de importacao; tipos/ordinais inspecionados apos mapeamento do PE)";
     return s.str();
 }
 std::array<uint8_t,16> derive_session_key(Bytes xex, const Headers& h,
@@ -179,7 +180,15 @@ std::vector<uint8_t> extract_pe(Bytes data, const Headers& h,
         out.insert(out.end(),zero_size,0);
         pos+=data_size;
     }
-    if(pos!=raw.size())throw std::runtime_error("Tamanho de blocos basic difere do payload");
+    // AES-CBC payloads are block-aligned. The Basic descriptor describes the
+    // meaningful compressed data; a final 0..15-byte all-zero suffix is padding,
+    // not an extra Basic block. Reject nonzero trailing bytes and larger tails.
+    if(pos!=raw.size()){
+        const auto remaining=raw.size()-pos;
+        if(remaining>=16 || !std::all_of(raw.begin()+static_cast<std::ptrdiff_t>(pos),
+                                      raw.end(),[](uint8_t b){return b==0;}))
+            throw std::runtime_error("Tamanho de blocos basic difere do payload");
+    }
     return out;
 }
 

@@ -201,12 +201,14 @@ Java_com_x360nexus_MainActivity_nativePrepareStagedXex(JNIEnv* env, jobject) {
         std::fill(pe.begin(),pe.end(),0); // discard host-side extracted image after staging
         g_prepared=std::move(prepared);
         g_ram=std::move(next);
+        const auto inv=x360::xex::inspect_import_thunks(g_prepared->imports,
+            g_prepared->base,g_prepared->image_size,*g_ram);
         return java_string(env,"PE32 POWERPCBE preparado na RAM!\nBase: "+format_hex(g_prepared->base)+
             "\nEntry Point: "+format_hex(g_prepared->pc)+
             "\nSecoes: "+std::to_string(g_prepared->sections.size())+
             "\nBibliotecas importadas: "+std::to_string(g_prepared->imports.size())+
-            "\nImports xboxkrnl/xam: pendentes de resolucao real.\n"
-            "CPU Rust limitada a instrucoes implementadas; sem GPU/kernel Xbox 360 completos.");
+            "\n"+inv.describe()+"\n"
+            "CPU Rust interpreta somente instrucoes conhecidas; a GPU Xenos ainda nao traduz shaders comerciais.");
     } catch(const std::exception& e) {
         {
             std::lock_guard<std::mutex> lock(g_memory_mutex);
@@ -313,4 +315,25 @@ Java_com_x360nexus_MainActivity_nativePreparedChunk(JNIEnv* env,jobject,jlong ad
     if(result)env->SetByteArrayRegion(result,0,count,reinterpret_cast<const jbyte*>(buffer.data()));
     std::fill(buffer.begin(),buffer.end(),0);
     return result;
+}
+
+// Import catalog: triples [thunk guest address, module id, ordinal]. Only real
+// executable thunk records are returned; no fake successful HLE mappings.
+extern "C" JNIEXPORT jlongArray JNICALL
+Java_com_x360nexus_MainActivity_nativeImportThunks(JNIEnv* env,jobject){
+    std::lock_guard<std::mutex> lock(g_memory_mutex);
+    if(!g_prepared || !g_ram)return nullptr;
+    const auto inv=x360::xex::inspect_import_thunks(g_prepared->imports,
+        g_prepared->base,g_prepared->image_size,*g_ram);
+    if(inv.thunks.size()>8192)return nullptr;
+    std::vector<jlong> triples;triples.reserve(inv.thunks.size()*3);
+    for(const auto& thunk:inv.thunks){
+        triples.push_back(thunk.address);
+        triples.push_back(thunk.module);
+        triples.push_back(thunk.ordinal);
+    }
+    auto out=env->NewLongArray(static_cast<jsize>(triples.size()));
+    if(out && !triples.empty())env->SetLongArrayRegion(out,0,
+        static_cast<jsize>(triples.size()),triples.data());
+    return out;
 }
