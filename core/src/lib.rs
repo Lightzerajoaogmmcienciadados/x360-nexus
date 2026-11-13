@@ -1,4 +1,4 @@
-//! X360 GALAXY v5.7: incremental PPC interpreter & XEX2/PM4 loader; retail games not guaranteed.
+//! X360 GALAXY v5.8: incremental PPC interpreter & XEX2/PM4 loader; retail games not guaranteed.
 pub mod audio;
 pub mod cpu;
 pub mod gpu;

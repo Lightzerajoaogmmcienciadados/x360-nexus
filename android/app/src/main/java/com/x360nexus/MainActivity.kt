@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** v5.6 immersive Android UI, sparse guest RAM and experimental PM4 GLES. */
+/** v5.8 immersive Android UI, sparse guest RAM and snapshot-based PM4 GLES. */
 class MainActivity : Activity() {
     companion object {
         private const val PICK_ISO=100
@@ -255,7 +255,7 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.consoleToggle).setOnClickListener {
             console.visibility=if(console.visibility==View.VISIBLE)View.GONE else View.VISIBLE
         }
-        log("v5.5: Rust JNI=${RUST_READY}, C++ JNI=${NATIVE_READY}. XEX AES/Basic e imports verificados; GPU Xenos ainda incompleta.")
+        log("v5.8: Rust JNI=${RUST_READY}, C++ JNI=${NATIVE_READY}. XEX AES/Basic e imports verificados; GPU Xenos ainda incompleta.")
         worker.execute {
             val info=GpuDetector.query(this)
             currentGpu="${info.family}\n${info.renderer}\nOpenGL ES: ${info.version}\nVulkan: ${info.vulkan}"
@@ -453,7 +453,7 @@ class MainActivity : Activity() {
                 videoWorker.execute{if(NATIVE_READY)nativeSetVideoSurface(null)}
             }
         })
-        uiLog("Tela paisagem iniciada. Renderizacao GLES atual ainda e diagnostica, nao Minecraft.")
+        uiLog("Modo paisagem v5.8: SurfaceView GLES3, PM4 capturado no VdSwap; EDRAM/shaders Xenos ainda nao implementados.")
     }
     private fun exitGameMode(stop:Boolean){
         val overlay=gameOverlay?:return

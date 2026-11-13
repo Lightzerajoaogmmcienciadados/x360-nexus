@@ -1,3 +1,23 @@
+# X360: GALAXY v5.8 — compatibilidade de boot, imports XEX2 e snapshots PM4
+
+## Implementado nesta atualização
+- **Boot Minecraft**: título `0x4D530A81`, PC `0x8214AB10` e opcode `0x419A0088` precisam corresponder aos valores observados antes de ajustar apenas o bit `CR6.EQ` (`CR=0x20`). É uma hipótese de compatibilidade exclusiva do boot relatado, **não** uma regra comprovada da ABI Xbox 360. Logs incluem `BOOT_COMPAT`, `CR` e `CR6_EQ`.
+- **XEX2**: `map_pe` guarda cada descritor original de importação imediatamente após mapear todas as seções e **antes de qualquer patch ou vinculação HLE**. O inspetor prioriza os registros imutáveis, distingue descritores `0x01xxxxxx` em seções executáveis dos que estão fora do `.text`, informa divergências snapshot/RAM e não cria falsos endereços. O stub `sc 2; blr` só é aplicado quando o endereço validado continua contendo o descritor original. O contador de patches é real.
+- **PM4 / VdSwap**: a CPU captura as gravações reais do ring buffer em bytes **no instante do swap**; o worker Android drena uma fila limitada de até 16 snapshots, em vez de tentar ler RAM mutável 350 ms depois. O parser C++ limpa o estado entre títulos para não reutilizar registradores/shaders anteriores.
+- **GPU**: contexto OpenGL ES 3.2 quando disponível, fallback ES3 e SurfaceView preta enquanto não houver shaders/framebuffer interpretáveis. O triângulo falso continua removido.
+- **HLE**: TLS, memória virtual, tempo, critical sections, input Xam, criação experimental de threads e serviços de vídeo existentes são preservados. Ordinais desconhecidos **não** recebem sucesso falso indiscriminadamente: a ABI e os efeitos colaterais precisam ser identificados antes de classificá-los como não críticos.
+- **CI**: testes C++/Rust e compilação de APK Android ARM64 pelo GitHub Actions.
+
+## Limitações verificáveis
+
+O teste comercial com Minecraft foi **relatado pelo usuário**, mas nenhum XEX/ISO ou dump de descritores foi entregue ao projeto. Não se pode garantir `IMPORT_THUNKS=142` sem ver os registros reais, nem confirmar o boot de Minecraft com esses ajustes. Os testes `154/142` são sintéticos. Emulação completa de Xenos, EDRAM, shaders do jogo, VMX128 e kernel Xbox 360 permanece em construção. O aplicativo não inclui jogos ou chaves de console.
+
+O próximo log relevante inclui: `tipo1 antes do patch`, `tipo1 executaveis`, `tipo1 fora .text`, `snapshots prepatch`, `diferencias snapshot/RAM`, o total aplicado, `BOOT_COMPAT` e `NEXT_PC`.
+
+---
+
+## Histórico v5.7
+
 # X360: GALAXY v5.7 — PowerPC CR, import veneers e Xenos PM4
 
 Atualização incremental do projeto experimental Android ARM64 em Rust/C++.
