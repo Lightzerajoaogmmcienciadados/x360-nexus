@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(x360_galaxy_v54_tests VERSION 5.4.0 LANGUAGES CXX)
+project(x360_galaxy_v56_tests VERSION 5.6.0 LANGUAGES CXX)
 enable_testing()
 add_library(x360_core STATIC android/app/src/main/cpp/xdvdfs.cpp android/app/src/main/cpp/xex_loader.cpp android/app/src/main/cpp/xex_crypto.cpp android/app/src/main/cpp/xex_lzx.cpp android/app/src/main/cpp/xex_imports.cpp)
 target_include_directories(x360_core PUBLIC android/app/src/main/cpp)
@@ -19,3 +19,8 @@ target_compile_options(x360_pm4 PRIVATE -Wall -Wextra -Wpedantic -Werror)
 add_executable(pm4_tests tests/pm4_tests.cpp)
 target_link_libraries(pm4_tests PRIVATE x360_pm4)
 add_test(NAME pm4_ring_decoder COMMAND pm4_tests)
+
+# Assertions in the regression tests must also run for Release CI builds.
+foreach(test_target xdvdfs_tests xex_loader_tests pm4_tests)
+    target_compile_options(${test_target} PRIVATE -UNDEBUG)
+endforeach()
