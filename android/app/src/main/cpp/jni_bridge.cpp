@@ -192,6 +192,9 @@ Java_com_x360nexus_MainActivity_nativeInspectStagedXex(JNIEnv* env, jobject) {
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_x360nexus_MainActivity_nativePrepareStagedXex(JNIEnv* env, jobject) {
     try {
+        // Release CP before taking the PE memory lock: otherwise direct PM4
+        // guest reads could invert gpu_mutex -> memory_mutex lock order.
+        x360::gpu::processor().reset();
         std::lock_guard<std::mutex> lock(g_memory_mutex);
         if(!g_ram || !g_loaded_bytes) return java_string(env,"Primeiro carregue default.xex pelo botao 3.");
         if(g_raw_xex.empty()) {
@@ -210,7 +213,6 @@ Java_com_x360nexus_MainActivity_nativePrepareStagedXex(JNIEnv* env, jobject) {
         g_ram=std::move(next);
         // Inspect the immutable pre-patch descriptor snapshot before any
         // thunk rewrite or variable binding. Do not invent expected counts.
-        x360::gpu::processor().reset(); // no PM4 state leaked from prior title
         g_import_inventory=x360::xex::inspect_import_thunks(g_prepared->imports,
             g_prepared->base,g_prepared->image_size,*g_ram,g_prepared->executable_ranges);
         g_patched_thunks=x360::xex::patch_import_thunks(*g_import_inventory,
