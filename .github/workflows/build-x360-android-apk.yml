@@ -1,11 +1,11 @@
-name: X360 Nexus v5.0 PPC HLE PM4 GLES Android
+name: X360 Nexus v5.1 continuous PPC sparse RAM PM4 GLES Android
 
 on:
   workflow_dispatch:
   push:
     branches:
       - main
-      - feature/project-xenon-v5.0-gpu-runtime
+      - feature/x360-galaxy-v5.1-continuous-cpu-gles
     paths:
       - '.github/workflows/build-x360-android-apk.yml'
       - 'android/**'
@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   android-apk:
-    name: Compile v5.0 ARM64 APK
+    name: Compile v5.1 ARM64 APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -92,7 +92,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: X360-Nexus-v5.0-Android-ARM64-Debug-APK
+          name: X360-Nexus-v5.1-Android-ARM64-Debug-APK
           path: |
             android/app/build/outputs/apk/debug/app-debug.apk
             apk-sha256.txt
@@ -103,7 +103,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: X360-Nexus-v5.0-Android-Build-Log
+          name: X360-Nexus-v5.1-Android-Build-Log
           path: gradle-build.log
           if-no-files-found: ignore
           retention-days: 7
