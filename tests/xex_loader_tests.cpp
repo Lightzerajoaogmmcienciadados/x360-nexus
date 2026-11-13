@@ -192,5 +192,36 @@ int main(){
   const std::array<uint8_t,20> expected_sha1{0xa9,0x99,0x3e,0x36,0x47,0x06,0x81,0x6a,0xba,0x3e,
          0x25,0x71,0x78,0x50,0xc2,0x6c,0x9c,0xd0,0xd8,0x9d};
   assert(sha1_lzx_block(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>("abc"),3)) == expected_sha1);
+  // Basic descriptor + CBC block padding: zero suffix up to 15 bytes only.
+  {
+    auto padded=xex_sample(pe,1,0);
+    padded.insert(padded.end(),8,0);
+    assert(extract_pe(padded,parse_headers(padded))==pe);
+    padded.back()=0x41;
+    bool padding_rejected=false;
+    try{(void)extract_pe(padded,parse_headers(padded));}
+    catch(const std::runtime_error&){padding_rejected=true;}
+    assert(padding_rejected);
+  }
+  // Import record entries point to guest virtual addresses, not ordinals.
+  // The word at that address encodes type (0=variable,1=thunk) and ordinal.
+  {
+    x360::xdvdfs::GuestRam imported_ram;
+    constexpr uint32_t base=0x82000000;
+    const std::array<uint8_t,4> thunk_word{1,0,1,0x52}; // ordinal 0x152=338, KeTlsAlloc
+    const std::array<uint8_t,4> variable_word{0,0,0,4};
+    imported_ram.write(base+0x1000,thunk_word.data(),thunk_word.size());
+    imported_ram.write(base+0x1020,variable_word.data(),variable_word.size());
+    ImportLibrary lib;
+    lib.name="XBOXKRNL.EXE";
+    lib.record_count=3;
+    lib.guest_slots={base+0x1000,base+0x1020,base+0x2004}; // last outside image
+    const auto inv=inspect_import_thunks({lib},base,0x2000,imported_ram);
+    assert(inv.records==3 && inv.variables==1 && inv.malformed==1);
+    assert(inv.thunks.size()==1);
+    assert(inv.thunks[0].address==base+0x1000);
+    assert(inv.thunks[0].ordinal==338 && inv.thunks[0].module==1);
+    assert(inv.describe().find("ordinal=338")!=std::string::npos);
+  }
   std::cout<<"XEX/PE, LZX uncompressed frame, SHA-1 chain, AES key unwrap: OK\n";
 }
