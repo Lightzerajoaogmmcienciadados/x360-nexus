@@ -33,6 +33,7 @@ public:
     using GuestWords = std::function<bool(uint32_t, size_t, std::vector<uint32_t>&)>;
     bool submit(std::span<const uint32_t> words, std::string& error,
                 const GuestWords& read_guest = {});
+    void reset(); // new title: clear queued packets, registers and stale shaders
     Stats stats() const;
     bool register_value(uint32_t index, uint32_t& value) const;
     size_t uploaded_shader_words(unsigned stage) const;

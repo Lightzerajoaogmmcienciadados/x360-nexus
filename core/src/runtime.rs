@@ -3,7 +3,7 @@
 //! imports, exception handling, MMIO, VMX128 and actual Xbox kernel are incomplete.
 use crate::{cpu::Cpu,kernel::Kernel,memory::Memory,scheduler::Scheduler};
 use jni::{JNIEnv,objects::{JByteArray,JLongArray,JObject},sys::{jbyteArray,jint,jlong,jstring}};
-use std::{collections::BTreeMap,fmt::Write,sync::{Mutex,OnceLock,atomic::{AtomicBool,AtomicU64,Ordering}},time::Instant,thread};
+use std::{collections::{BTreeMap,VecDeque},fmt::Write,sync::{Mutex,OnceLock,atomic::{AtomicBool,AtomicU64,Ordering}},time::Instant,thread};
 const GUEST_BASE:u64=0x8200_0000;
 const GUEST_SIZE:usize=512*1024*1024;
 const MAX_IMAGE:usize=128*1024*1024;
@@ -127,6 +127,7 @@ pub struct Session {
     variables:BTreeMap<usize,(u32,u32,u32)>,
     first_instruction:Option<String>, known_variables:usize, boot_clock:Instant,
     boot_compatibility:Option<String>,
+    gpu_frames:VecDeque<Vec<u8>>,gpu_frames_dropped:u64,
 }
 impl Session {
     pub fn create_paged(base:u64,entry:u64,size:usize,ranges:&[i64])->Result<Self,String>{
@@ -159,7 +160,8 @@ impl Session {
             image_size:size,loaded:0,steps:0,paused:None,last_event:String::new(),last_ips:0.0,
             imports:BTreeMap::new(),variables:BTreeMap::new(),
             first_instruction:None,known_variables:0,boot_clock:Instant::now(),
-            boot_compatibility:None})
+            boot_compatibility:None,gpu_frames:VecDeque::new(),
+            gpu_frames_dropped:0})
     }
     pub fn create(image:Vec<u8>,base:u64,entry:u64,ranges:&[i64])->Result<Self,String>{
         let mut s=Self::create_paged(base,entry,image.len(),ranges)?;
@@ -354,7 +356,17 @@ impl Session {
                         let writes=self.mem.take_gpu_ring_writes();
                         self.kernel.capture_gpu_ring_write(writes);
                         if let Some((address,words))=writes {
-                            self.last_event=format!("{event}; PM4 guest write 0x{address:08X} ({words} dwords)");
+                            // Capture guest command bytes AT the VdSwap boundary,
+                            // not hundreds of ms later after game RAM changed.
+                            let bytes=self.mem.read(address as usize,words as usize*4)
+                                .map_err(|e|format!("VdSwap ring read failed: {e}"))?;
+                            if self.gpu_frames.len()==16{
+                                self.gpu_frames.pop_front();
+                                self.gpu_frames_dropped+=1;
+                            }
+                            self.gpu_frames.push_back(bytes);
+                            self.last_event=format!(
+                                "{event}; PM4 snapshot 0x{address:08X} ({words} dwords)");
                         }
                     }
                     if module==1 && ordinal==13 {
@@ -436,6 +448,8 @@ impl Session {
         if let Some(first)=&self.first_instruction{let _=writeln!(s,"{first}");}
         let (ring,words,swaps)=self.kernel.gpu_ring_snapshot();
         let _=writeln!(s,"GPU_RING=0x{ring:08X}; GPU_DWORDS={words}; SWAPS={swaps}");
+        let _=writeln!(s,"PM4_FRAME_QUEUE={} PM4_FRAMES_DROPPED={}",
+            self.gpu_frames.len(),self.gpu_frames_dropped);
         if !reason.is_empty(){let _=writeln!(s,"{reason}");}
         if !self.last_event.is_empty(){let _=writeln!(s,"HLE: {}",self.last_event);}
         if let Ok(w)=self.mem.read_u32_be(self.cpu.pc){let _=writeln!(s,"Proximo opcode=0x{w:08X}");}
@@ -482,6 +496,17 @@ pub extern "system" fn Java_com_x360nexus_MainActivity_nativeUploadSessionChunk(
         Ok(if session.ready(){"OK|PE guest pages complete".into()}else{"OK|PE chunk mapped".into()})
     })();
     output(env,result.unwrap_or_else(|e|format!("ERROR|{e}")))
+}
+#[no_mangle]
+pub extern "system" fn Java_com_x360nexus_MainActivity_nativeDrainPm4Frame(mut env:JNIEnv,_:JObject)->jbyteArray{
+    let frame=match state().lock(){
+        Ok(mut state)=>state.as_mut().and_then(|s|s.gpu_frames.pop_front()),
+        Err(_)=>None,
+    };
+    if let Some(bytes)=frame{
+        env.byte_array_from_slice(&bytes).map(|x|x.into_raw())
+            .unwrap_or(std::ptr::null_mut())
+    }else{std::ptr::null_mut()}
 }
 #[no_mangle]
 pub extern "system" fn Java_com_x360nexus_MainActivity_nativeConfigureBootCr(env:JNIEnv,_:JObject,title_id:jlong)->jstring{

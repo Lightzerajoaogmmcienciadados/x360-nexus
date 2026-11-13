@@ -53,5 +53,9 @@ int main(){
     assert(p.stats().shader_uploads==1);
     std::vector<uint32_t> too_long(CommandProcessor::kMaxQueuedWords+1);
     assert(!p.submit(too_long,err));
-    std::cout<<"PM4 packet0/2/3, shader capture, guest register state, unsupported draw: PASS\n";
+    p.reset();
+    assert(p.stats().packets==0 && p.stats().shader_uploads==0);
+    assert(p.uploaded_shader_words(0)==0);
+    assert(p.register_value(0x10,value)&&value==0);
+    std::cout<<"PM4 packet0/2/3, shader capture, reset, unsupported draw: PASS\n";
 }

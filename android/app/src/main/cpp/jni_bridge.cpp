@@ -1,5 +1,6 @@
 #include "xdvdfs.hpp"
 #include "xex_loader.hpp"
+#include "xenos_pm4.hpp"
 #include <jni.h>
 
 #include <cstdio>
@@ -209,6 +210,7 @@ Java_com_x360nexus_MainActivity_nativePrepareStagedXex(JNIEnv* env, jobject) {
         g_ram=std::move(next);
         // Inspect the immutable pre-patch descriptor snapshot before any
         // thunk rewrite or variable binding. Do not invent expected counts.
+        x360::gpu::processor().reset(); // no PM4 state leaked from prior title
         g_import_inventory=x360::xex::inspect_import_thunks(g_prepared->imports,
             g_prepared->base,g_prepared->image_size,*g_ram,g_prepared->executable_ranges);
         g_patched_thunks=x360::xex::patch_import_thunks(*g_import_inventory,

@@ -79,6 +79,7 @@ class MainActivity : Activity() {
     private external fun nativeProcessPm4(address:Long, dwords:Int):String
     private external fun nativeSubmitPm4Bytes(packet:ByteArray):String
     private external fun nativeReadSessionMemory(address:Long,length:Int):ByteArray?
+    private external fun nativeDrainPm4Frame():ByteArray?
     private external fun nativeSetButton(mask:Int, pressed:Boolean)
     private external fun nativeSetAxis(axis:Int, value:Int)
     private external fun nativeSetGpuCapabilities(renderer:String,gles:String,vulkan:String):String
@@ -534,20 +535,17 @@ class MainActivity : Activity() {
                         telemetry.text="RAM virtual: 512 MiB | PE: ${size/1024/1024} MiB | IPS: $ips | PM4: parcial"
                         log(status)
                     }
-                    val state=Regex("GPU_RING=0x([0-9A-Fa-f]+); GPU_DWORDS=([0-9]+); SWAPS=([0-9]+)").find(status)
-                    if(state!=null && NATIVE_READY){
-                        val swaps=state.groupValues[3].toLongOrNull()?:0L
-                        val n=state.groupValues[2].toIntOrNull()?:0
-                        if(swaps!=lastSwap){
-                            lastSwap=swaps
-                            if(n in 1..4096){
-                                val address=state.groupValues[1].toLong(16)
-                                val raw=nativeReadSessionMemory(address,n*4)
-                                if(raw!=null){
-                                    val msg=try{nativeSubmitPm4Bytes(raw)}finally{raw.fill(0)}
-                                    uiLog("PM4/RAM: $msg")
-                                }
-                            }
+                    // Each VdSwap captures an immutable ring-buffer snapshot
+                    // in the Rust CPU worker; never re-read potentially modified
+                    // live ring memory at the next Android polling interval.
+                    if(NATIVE_READY){
+                        repeat(16){
+                            val raw=nativeDrainPm4Frame()?:return@repeat
+                            if(raw.isNotEmpty() && raw.size%4==0){
+                                val msg=try{nativeSubmitPm4Bytes(raw)}
+                                        finally{raw.fill(0)}
+                                if(!msg.contains("PM4 guest RAM:"))uiLog("PM4: $msg")
+                            }else raw.fill(0)
                         }
                     }
                     if(!last.startsWith("RUNNING|")){
