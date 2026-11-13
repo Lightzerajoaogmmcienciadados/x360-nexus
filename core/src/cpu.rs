@@ -341,7 +341,7 @@ use super::*;
         let crxor=(19u32<<26)|(26<<21)|(26<<16)|(26<<11)|(193<<1);
         mem.write(4,&crxor.to_be_bytes()).unwrap();
         cpu.step_mut(&mut mem).unwrap();assert!(!cpu.cr_bit(26));
-        let cror=(19u32<<26)|(26<<21)|(25<<16)|(25<<11)|(449<<1);
+        let cror=(19u32<<26)|(26<<21)|(27<<16)|(27<<11)|(449<<1);
         mem.write(8,&cror.to_be_bytes()).unwrap();
         cpu.step_mut(&mut mem).unwrap();assert!(cpu.cr_bit(26)); // EQ bit from cr6
         let mcrf=(19u32<<26)|(3<<23)|(6<<18);
