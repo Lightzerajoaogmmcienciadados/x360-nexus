@@ -14,6 +14,11 @@ const MAIN_STACK_TOP:u64=0x7010_0000;
 const MAIN_PCR:u64=0x7100_0000;
 const MAIN_THREAD:u64=0x7100_1000;
 const MAIN_TLS:u64=0x7101_0000;
+// Validated type-0 import slots receive owned backing cells here; these
+// are placeholders for exports not yet implemented, not real Xboxkrnl state.
+const EXPORT_VARIABLE_BASE:u64=0x7200_0000;
+const EXPORT_VARIABLE_STRIDE:u64=256;
+const MAX_IMPORT_VARIABLES:usize=8192;
 
 /// Limited user-mode bootstrap model based on known Xbox 360 KPCR offsets.
 /// It is not the complete kernel KTHREAD/TEB initialization sequence.
@@ -92,6 +97,7 @@ pub struct Session {
     cpu:Cpu, mem:Memory, kernel:Kernel, exec:Vec<(usize,usize)>, scheduler:Scheduler,
     image_base:u64,image_size:usize,loaded:usize,steps:u64,paused:Option<String>,
     last_event:String,last_ips:f64, imports:BTreeMap<usize,(u32,u32)>,
+    variables:BTreeMap<usize,(u32,u32,u32)>,
 }
 impl Session {
     pub fn create_paged(base:u64,entry:u64,size:usize,ranges:&[i64])->Result<Self,String>{
@@ -122,7 +128,7 @@ impl Session {
         kernel.set_guest_heap_base(0x2000_0000)?;
         Ok(Self{cpu,mem,kernel,exec,scheduler:Scheduler::new(),image_base:base,
             image_size:size,loaded:0,steps:0,paused:None,last_event:String::new(),last_ips:0.0,
-            imports:BTreeMap::new()})
+            imports:BTreeMap::new(),variables:BTreeMap::new()})
     }
     pub fn create(image:Vec<u8>,base:u64,entry:u64,ranges:&[i64])->Result<Self,String>{
         let mut s=Self::create_paged(base,entry,image.len(),ranges)?;
@@ -158,6 +164,55 @@ impl Session {
         }
         self.imports=imports;
         Ok(self.imports.len())
+    }
+    /// Install only type-0 records that still contain the original XEX
+    /// descriptor. A separate low VA cell is provided, but unknown exports
+    /// remain empty: non-zero pointer != implemented kernel variable.
+    pub fn set_variable_catalog(&mut self,data:&[i64])->Result<usize,String>{
+        if !self.ready() || self.steps>0{return Err("cannot configure variables after CPU launch or before PE upload".into())}
+        if data.len()%3!=0 || data.len()/3>MAX_IMPORT_VARIABLES{
+            return Err("invalid variable triples".into());
+        }
+        let mut staged=BTreeMap::new();
+        for chunk in data.chunks_exact(3){
+            let (addr,module,ordinal)=(chunk[0],chunk[1],chunk[2]);
+            if !(0..=u32::MAX as i64).contains(&addr)
+                || !(1..=2).contains(&module) || !(1..=65535).contains(&ordinal){
+                return Err("invalid variable slot/module/ordinal".into());
+            }
+            let at=addr as usize;
+            let end=self.image_base.checked_add(self.image_size as u64).ok_or("image overflow")?;
+            if (at as u64)<self.image_base || (at as u64).checked_add(4).is_none_or(|v|v>end)
+               {
+                return Err(format!("variable import slot outside image 0x{at:08X}"));
+            }
+            let value=self.mem.read_u32_be(at).map_err(str::to_string)?;
+            if value>>24!=0 || value&0xffff!=ordinal as u32 {
+                return Err(format!("unexpected variable descriptor @0x{at:08X} value=0x{value:08X}"));
+            }
+            if staged.insert(at,(module as u32,ordinal as u32)).is_some(){
+                return Err(format!("duplicate variable slot 0x{at:08X}"));
+            }
+        }
+        // Keep the v5.4 secondary-thread stack region (>0x72080000) free.
+        if staged.len() as u64*EXPORT_VARIABLE_STRIDE > 0x80000 {
+            return Err("import variable backing capacity exceeded".into());
+        }
+        if staged.is_empty(){self.variables.clear();return Ok(0);}
+        let region_len=(staged.len() as u64*EXPORT_VARIABLE_STRIDE+4095)&!4095;
+        self.mem.set_page_permissions(EXPORT_VARIABLE_BASE,region_len as usize,
+            Memory::READ|Memory::WRITE).map_err(str::to_string)?;
+        let mut variables=BTreeMap::new();
+        for (i,(&slot,&(module,ordinal))) in staged.iter().enumerate(){
+            let pointer=EXPORT_VARIABLE_BASE+i as u64*EXPORT_VARIABLE_STRIDE;
+            // A cell is zero-initialized unless a real export mapping exists.
+            // The exact slot is updated by the loader, never by guest code.
+            self.mem.load_image_bytes(slot,&(pointer as u32).to_be_bytes())
+                .map_err(str::to_string)?;
+            variables.insert(slot,(module,ordinal,pointer as u32));
+        }
+        self.variables=variables;
+        Ok(self.variables.len())
     }
     pub fn ready(&self)->bool{self.loaded==self.image_size}
     pub fn read_guest_bytes(&self,address:u64,length:usize)->Result<Vec<u8>,String>{
@@ -236,6 +291,7 @@ impl Session {
             self.last_ips,self.steps,self.cpu.pc,self.cpu.lr,self.cpu.ctr,self.mem.committed_bytes()/1024);
         let _=writeln!(s,"THREAD={} / {} (agendador de teste); IMPORT_THUNKS={}",
             self.scheduler.current_id(),self.scheduler.threads(),self.imports.len());
+        let _=writeln!(s,"IMPORT_VARIABLE_CELLS={} (placeholder backing; exports desconhecidos)",self.variables.len());
         let (ring,words,swaps)=self.kernel.gpu_ring_snapshot();
         let _=writeln!(s,"GPU_RING=0x{ring:08X}; GPU_DWORDS={words}; SWAPS={swaps}");
         if !reason.is_empty(){let _=writeln!(s,"{reason}");}
@@ -343,6 +399,21 @@ pub extern "system" fn Java_com_x360nexus_MainActivity_nativeConfigureImportThun
     })();
     output(env,msg.unwrap_or_else(|e|format!("ERROR|{e}")))
 }
+#[no_mangle]
+pub extern "system" fn Java_com_x360nexus_MainActivity_nativeConfigureImportVariables(
+    mut env:JNIEnv,_:JObject,triples:JLongArray)->jstring {
+    let msg=(||->Result<String,String>{
+        let n=env.get_array_length(&triples).map_err(|e|e.to_string())? as usize;
+        if n>MAX_IMPORT_VARIABLES*3 || n%3!=0{return Err("invalid import variable count".into());}
+        let mut values=vec![0i64;n];
+        env.get_long_array_region(&triples,0,&mut values).map_err(|e|e.to_string())?;
+        let mut state=state().lock().map_err(|_|"session lock poisoned")?;
+        let session=state.as_mut().ok_or("no guest session")?;
+        let installed=session.set_variable_catalog(&values)?;
+        Ok(format!("OK|{installed} validated import variable slots with guest backing (unknown exports not HLE implemented)"))
+    })();
+    output(env,msg.unwrap_or_else(|e|format!("ERROR|{e}")))
+}
 // PM4 inspection reads only a bounded slice from the active Rust guest RAM.
 // No host pointer or large snapshot crosses the JNI boundary.
 #[no_mangle]
@@ -421,5 +492,28 @@ pub extern "system" fn Java_com_x360nexus_MainActivity_nativeReadSessionMemory(
         assert!(report.contains("EA=0x00000094"),"{report}");
         assert!(report.contains("r30=0x0000000000000000"),"{report}");
         assert!(report.contains("PARADA:"),"{report}");
+    }
+}
+
+#[cfg(test)] mod import_variable_tests {
+    use super::*;
+    #[test]fn maps_variable_backing_without_clobbering_code(){
+        let base=0x82000000u64;
+        let mut code=vec![0u8;0x2000];
+        code[0..4].copy_from_slice(&[0x60,0,0,0]);
+        code[0x1100..0x1104].copy_from_slice(&0x0000_0077u32.to_be_bytes());
+        let mut s=Session::create(code,base,base,&[base as i64,base as i64+0x1000]).unwrap();
+        assert_eq!(s.set_variable_catalog(&[(base+0x1100) as i64,1,119]).unwrap(),1);
+        assert_eq!(s.mem.read_u32_be((base+0x1100) as usize).unwrap(),EXPORT_VARIABLE_BASE as u32);
+        assert_eq!(s.mem.read_u32_be(EXPORT_VARIABLE_BASE as usize).unwrap(),0);
+        assert_eq!(s.mem.fetch_u32_be(base as usize).unwrap(),0x60000000);
+    }
+    #[test]fn rejects_unknown_descriptor_and_executable_slot(){
+        let base=0x82000000u64;
+        let mut code=vec![0u8;0x2000];
+        code[0x1100..0x1104].copy_from_slice(&0x48000010u32.to_be_bytes());
+        let mut s=Session::create(code,base,base,&[base as i64,base as i64+0x1000]).unwrap();
+        assert!(s.set_variable_catalog(&[(base+0x1100) as i64,1,0x10]).is_err());
+        assert!(s.set_variable_catalog(&[base as i64,1,15]).is_err());
     }
 }

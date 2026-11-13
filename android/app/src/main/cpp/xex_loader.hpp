@@ -32,8 +32,14 @@ struct ImportThunk {
     uint32_t ordinal=0;
     uint32_t module=0; // 1=xboxkrnl.exe, 2=xam.xex
 };
+struct ImportVariable {
+    uint32_t address=0;
+    uint32_t ordinal=0;
+    uint32_t module=0; // 1=xboxkrnl.exe, 2=xam.xex
+};
 struct ImportInventory {
     std::vector<ImportThunk> thunks;
+    std::vector<ImportVariable> variables_found;
     size_t records=0, variables=0, malformed=0, unsupported_libraries=0;
     size_t unrecognized_types=0, uninitialized=0;
     std::vector<std::string> examples; // first eight unknown descriptors, never keys

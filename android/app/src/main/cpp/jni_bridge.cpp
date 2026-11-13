@@ -291,6 +291,23 @@ Java_com_x360nexus_MainActivity_nativePreparedSnapshot(JNIEnv* env,jobject){
     }catch(...){return nullptr;}
 }
 
+// v5.5: expose only validated type-0 variable descriptors. No guest pointer is
+// generated in C++ because Rust owns the active low virtual memory mapping.
+extern "C" JNIEXPORT jlongArray JNICALL
+Java_com_x360nexus_MainActivity_nativeImportVariables(JNIEnv* env,jobject){
+    std::lock_guard<std::mutex> lock(g_memory_mutex);
+    if(!g_prepared || !g_import_inventory)return nullptr;
+    const auto& vars=g_import_inventory->variables_found;
+    if(vars.size()>8192)return nullptr;
+    std::vector<jlong> triples;triples.reserve(vars.size()*3);
+    for(const auto& v:vars){
+        triples.push_back(v.address);triples.push_back(v.module);triples.push_back(v.ordinal);
+    }
+    auto array=env->NewLongArray(static_cast<jsize>(triples.size()));
+    if(array && !triples.empty())env->SetLongArrayRegion(array,0,static_cast<jsize>(triples.size()),triples.data());
+    return array;
+}
+
 // Read-only bridge for the PM4 diagnostic decoder. Do not hold this mutex
 // while calling GPU or EGL methods, avoiding the video-lock hierarchy.
 extern "C" bool x360_try_read_guest_ram(uint32_t address, void* dst, size_t len) {

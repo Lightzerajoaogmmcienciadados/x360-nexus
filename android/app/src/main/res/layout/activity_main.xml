@@ -140,7 +140,7 @@
             android:fontFamily="monospace" android:textSize="12sp" android:textColor="#C0E3C8"
             android:text="Logs da CPU / XEX / HLE…" android:textIsSelectable="true" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:text="v5.1: execução contínua de instruções implementadas, memória esparsa e controles de teste. Imports comerciais xboxkrnl/xam e renderização de jogos Xenos ainda não estão completos."
+            android:text="v5.5: execução contínua de instruções implementadas, memória esparsa e controles de teste. Imports comerciais xboxkrnl/xam e renderização de jogos Xenos ainda não estão completos."
             android:textSize="11sp" android:textColor="#A4ACAA" android:paddingTop="12dp" />
     </LinearLayout>
 </ScrollView>

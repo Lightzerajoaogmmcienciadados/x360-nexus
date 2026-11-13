@@ -159,6 +159,34 @@ int main(){
   uint8_t code[4];ram.read(0x82001000,code,4);
   assert(code[0]==0x38 && code[1]==0x60 && code[3]==5);
 
+  // Two string-table names with per-string 4-byte padding, followed by two
+  // library records. string_table.count counts names, not import libraries.
+  {
+    auto with_imports=xex_sample(pe);
+    u32be(with_imports,0x14,4); // four optional XEX headers
+    u32be(with_imports,0x30,0x000103FF);
+    u32be(with_imports,0x34,0x80);
+    const size_t off=0x80;
+    u32be(with_imports,off,12+24+44+44);
+    u32be(with_imports,off+4,24);
+    u32be(with_imports,off+8,2);
+    std::memcpy(with_imports.data()+off+12,"xboxkrnl.exe",12);
+    std::memcpy(with_imports.data()+off+12+16,"xam.xex",7);
+    const size_t r0=off+12+24,r1=r0+44;
+    for(const auto& record : std::vector<std::pair<size_t,uint16_t>>{{r0,0},{r1,1}}){
+      u32be(with_imports,record.first,44);
+      u16be(with_imports,record.first+36,record.second);
+      u16be(with_imports,record.first+38,1);
+    }
+    u32be(with_imports,r0+40,0x82001000);
+    u32be(with_imports,r1+40,0x82001100);
+    auto hdr=parse_headers(with_imports);
+    assert(hdr.imports.size()==2);
+    assert(hdr.imports[0].name=="xboxkrnl.exe");
+    assert(hdr.imports[1].name=="xam.xex");
+    assert(hdr.imports[0].guest_slots[0]==0x82001000);
+    assert(hdr.imports[1].guest_slots[0]==0x82001100);
+  }
   auto basic=xex_sample(pe,1,0);
   assert(extract_pe(basic,parse_headers(basic))==pe);
   const auto lzx=xex_normal_fixture(pe);

@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Immersive host screen. EGL video remains a diagnostic renderer until Xenos is implemented. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/gameOverlay" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="#0D0E12" android:keepScreenOn="true">
+    <SurfaceView android:id="@+id/gameSurface" android:layout_width="match_parent" android:layout_height="match_parent" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_gravity="top" android:orientation="horizontal" android:gravity="center_vertical"
+        android:background="#88101215" android:padding="5dp">
+        <TextView android:id="@+id/gameFps" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="FPS GL: -- / CPU: -- | Xenos: parcial"
+            android:fontFamily="monospace" android:textSize="11sp" android:textColor="#2ECC71" />
+        <Button android:id="@+id/gameMenu" android:layout_width="64dp" android:layout_height="40dp"
+            android:text="LOG" android:textColor="#FFFFFF" android:backgroundTint="#30383A" />
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_gravity="bottom"
+        android:gravity="bottom|center_horizontal" android:orientation="horizontal" android:padding="5dp"
+        android:background="#33101820">
+        <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:orientation="vertical">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content">
+                <Button android:id="@+id/gameLB" android:layout_width="0dp" android:layout_weight="1" android:layout_height="38dp" android:text="LB" android:textSize="10sp" android:alpha="0.6" />
+                <Button android:id="@+id/gameLT" android:layout_width="0dp" android:layout_weight="1" android:layout_height="38dp" android:text="LT" android:textSize="10sp" android:alpha="0.6" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                <com.x360nexus.AnalogPad android:id="@+id/gameLeftStick" android:layout_width="80dp" android:layout_height="80dp" />
+                <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical">
+                    <Button android:id="@+id/gameUp" android:layout_width="46dp" android:layout_height="36dp" android:text="↑" android:alpha="0.6" />
+                    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content">
+                        <Button android:id="@+id/gameLeft" android:layout_width="46dp" android:layout_height="36dp" android:text="←" android:alpha="0.6" />
+                        <Button android:id="@+id/gameRight" android:layout_width="46dp" android:layout_height="36dp" android:text="→" android:alpha="0.6" />
+                    </LinearLayout>
+                    <Button android:id="@+id/gameDown" android:layout_width="46dp" android:layout_height="36dp" android:text="↓" android:alpha="0.6" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+        <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical"
+            android:paddingLeft="5dp" android:paddingRight="5dp">
+            <Button android:id="@+id/gameStart" android:layout_width="70dp" android:layout_height="38dp" android:text="Start" android:textSize="10sp" android:alpha="0.6" />
+            <Button android:id="@+id/gameBack" android:layout_width="70dp" android:layout_height="38dp" android:text="Back" android:textSize="10sp" android:alpha="0.6" />
+        </LinearLayout>
+        <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:orientation="vertical">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content">
+                <Button android:id="@+id/gameRT" android:layout_width="0dp" android:layout_weight="1" android:layout_height="38dp" android:text="RT" android:textSize="10sp" android:alpha="0.6" />
+                <Button android:id="@+id/gameRB" android:layout_width="0dp" android:layout_weight="1" android:layout_height="38dp" android:text="RB" android:textSize="10sp" android:alpha="0.6" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                <com.x360nexus.AnalogPad android:id="@+id/gameRightStick" android:layout_width="80dp" android:layout_height="80dp" />
+                <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical">
+                    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content">
+                        <Button android:id="@+id/gameY" android:layout_width="45dp" android:layout_height="38dp" android:text="Y" android:alpha="0.6" />
+                        <Button android:id="@+id/gameX" android:layout_width="45dp" android:layout_height="38dp" android:text="X" android:alpha="0.6" />
+                    </LinearLayout>
+                    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content">
+                        <Button android:id="@+id/gameB" android:layout_width="45dp" android:layout_height="38dp" android:text="B" android:alpha="0.6" />
+                        <Button android:id="@+id/gameA" android:layout_width="45dp" android:layout_height="38dp" android:text="A" android:backgroundTint="#107C10" android:alpha="0.7" />
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+    <LinearLayout android:id="@+id/gameConsolePanel" android:layout_width="match_parent" android:layout_height="210dp"
+        android:layout_gravity="center" android:padding="8dp" android:orientation="vertical" android:visibility="gone" android:background="#EE181A20">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+            <Button android:id="@+id/gameCloseLog" android:layout_width="0dp" android:layout_weight="1" android:layout_height="44dp" android:text="FECHAR LOG" android:textSize="11sp" />
+            <Button android:id="@+id/gameExit" android:layout_width="0dp" android:layout_weight="1" android:layout_height="44dp" android:text="SAIR DO JOGO" android:textSize="11sp" />
+        </LinearLayout>
+        <ScrollView android:layout_width="match_parent" android:layout_height="match_parent">
+            <TextView android:id="@+id/gameConsole" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:textColor="#BBEFC7" android:textSize="11sp" android:fontFamily="monospace" android:textIsSelectable="true" />
+        </ScrollView>
+    </LinearLayout>
+</FrameLayout>

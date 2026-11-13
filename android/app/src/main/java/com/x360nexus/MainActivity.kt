@@ -1,6 +1,10 @@
 package com.x360nexus
 
 import android.app.Activity
+import android.content.pm.ActivityInfo
+import android.widget.FrameLayout
+import android.view.ViewGroup
+import android.view.LayoutInflater
 import android.app.AlertDialog
 import android.text.InputType
 import android.view.WindowManager
@@ -59,6 +63,8 @@ class MainActivity : Activity() {
     private external fun nativeLaunchSession():String
     private external fun nativePollSession():String
     private external fun nativeImportThunks():LongArray?
+    private external fun nativeImportVariables():LongArray?
+    private external fun nativeConfigureImportVariables(entries:LongArray):String
     private external fun nativeConfigureImportThunks(entries:LongArray):String
     private external fun nativeSetXexKey(bytes:ByteArray):String
     private external fun nativeClearXexKey():String
@@ -98,7 +104,7 @@ class MainActivity : Activity() {
                         videoTickCount++
                         if(videoTickCount%45==0 && NATIVE_READY){
                             val stat=nativeVideoStats()
-                            runOnUiThread {findViewById<TextView>(R.id.videoStats).text=stat}
+                            runOnUiThread {findViewById<TextView>(R.id.videoStats).text=stat;gameFps?.text=stat.take(155)}
                         }
                     }catch(t:Throwable){uiLog("GPU EGL: ${t.message}")}
                     finally {videoQueued.set(false)}
@@ -125,11 +131,16 @@ class MainActivity : Activity() {
     private var logBuffer=""
     private var currentGpu="GPU ainda não detectada"
     private var lastSwap=0L
+    private var keyReady=false
+    private var gameOverlay:View?=null
+    private var gameFps:TextView?=null
+    private var gameConsole:TextView?=null
 
     private fun log(message:String) {
         val stamped="[${SystemClock.uptimeMillis()/1000}s] $message\n"
         logBuffer=(logBuffer+stamped).takeLast(13000)
         console.text=logBuffer
+        gameConsole?.text=logBuffer
     }
     private fun uiLog(message:String) {runOnUiThread{log(message)}}
     private fun setBusy(on:Boolean){busy=on
@@ -142,7 +153,7 @@ class MainActivity : Activity() {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
         },PICK_ISO)
     }
-    private fun select(uri:Uri){selected=uri;renderGames()}
+    private fun select(uri:Uri){selected=uri;preparedUri=null;renderGames();launchOneClick()}
     private fun readStoredGames(){
         try {
             val arr=JSONArray(prefs.getString("games","[]"))
@@ -220,7 +231,7 @@ class MainActivity : Activity() {
         }
         findViewById<Button>(R.id.selectIso).setOnClickListener {if(!busy)picker()}
         findViewById<Button>(R.id.loadKey).setOnClickListener { showKeyDialog() }
-        findViewById<Button>(R.id.startGame).setOnClickListener {startSelected()}
+        findViewById<Button>(R.id.startGame).setOnClickListener {launchOneClick()}
         findViewById<Button>(R.id.stopGame).setOnClickListener {
             continueRunning.set(false)
             if(RUST_READY)worker.execute {uiLog(nativeStopSession())}
@@ -232,20 +243,24 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.consoleToggle).setOnClickListener {
             console.visibility=if(console.visibility==View.VISIBLE)View.GONE else View.VISIBLE
         }
-        log("v5.3: Rust JNI=${RUST_READY}, C++ JNI=${NATIVE_READY}. XEX AES/Basic e imports verificados; GPU Xenos ainda incompleta.")
+        log("v5.5: Rust JNI=${RUST_READY}, C++ JNI=${NATIVE_READY}. XEX AES/Basic e imports verificados; GPU Xenos ainda incompleta.")
         worker.execute {
             val info=GpuDetector.query(this)
             currentGpu="${info.family}\n${info.renderer}\nOpenGL ES: ${info.version}\nVulkan: ${info.vulkan}"
             val msg=if(NATIVE_READY) nativeSetGpuCapabilities(info.renderer,info.version,info.vulkan) else "JNI C++ indisponível"
             runOnUiThread {gpuText.text=currentGpu;log(msg);saveSettings()}
         }
-        if(selected!=null && NATIVE_READY) schedulePreparation("ISO restaurada")
+        // Restored library entries are not launched until selected by the user.
     }
     private fun restoreXexKey() {
         if(!NATIVE_READY)return
         try {
             val raw=SecretKeyStore.restore(this) ?: return
-            try {nativeSetXexKey(raw);log("Chave salva recuperada do AndroidKeyStore")}
+            try {
+                val result=nativeSetXexKey(raw)
+                keyReady=result.contains("carregada")
+                log(if(keyReady) "Chave salva recuperada do AndroidKeyStore" else result)
+            }
             finally {raw.fill(0)}
         }catch(e:Exception){SecretKeyStore.clear(this);log("Chave salva não pôde ser recuperada; importe novamente")}
     }
@@ -286,9 +301,10 @@ class MainActivity : Activity() {
                     preparedUri=null
                     if(result.contains("carregada")) {
                         SecretKeyStore.save(this,raw)
+                        keyReady=true
                         log("Chave hexadecimal aplicada (16 bytes) e salva cifrada")
                         dlg.dismiss()
-                        schedulePreparation("chave hexadecimal")
+                        if(selected!=null)launchOneClick()
                     }else {log(result)}
                 }catch(_:Exception){log("Falha aplicando chave; dados não foram exibidos")}
                 finally {raw.fill(0)}
@@ -327,6 +343,107 @@ class MainActivity : Activity() {
             finally{runOnUiThread{setBusy(false)}}
         }
     }
+    /** One touch chooses the ISO and opens a host game surface immediately.
+     * The CPU/PM4 pipeline may still stop on an unsupported kernel import. */
+    private fun launchOneClick(){
+        if(busy || continueRunning.get())return
+        if(selected==null){log("Selecione uma ISO primeiro");return}
+        if(!keyReady){
+            log("Chave XEX externa ainda nao carregada. Jogos sem criptografia podem usar modo manual.")
+            showKeyDialog();return
+        }
+        enterGameMode()
+        startSelected()
+    }
+    private fun configureImmersiveUi(enabled:Boolean){
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility=if(enabled){
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+        }else{View.SYSTEM_UI_FLAG_LAYOUT_STABLE}
+        if(enabled)window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+    private fun gameTouch(id:Int,mask:Int){
+        gameOverlay?.findViewById<Button>(id)?.setOnTouchListener {v,event->
+            when(event.actionMasked){
+                MotionEvent.ACTION_DOWN -> {if(RUST_READY)nativeSetButton(mask,true);v.alpha=0.95f;true}
+                MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL -> {if(RUST_READY)nativeSetButton(mask,false);v.alpha=0.55f;true}
+                else->true
+            }
+        }
+    }
+    private fun gameTrigger(id:Int,axis:Int){
+        gameOverlay?.findViewById<Button>(id)?.setOnTouchListener {v,event->
+            when(event.actionMasked){
+                MotionEvent.ACTION_DOWN->{if(RUST_READY)nativeSetAxis(axis,255);v.alpha=0.95f;true}
+                MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL->{if(RUST_READY)nativeSetAxis(axis,0);v.alpha=0.55f;true}
+                else->true
+            }
+        }
+    }
+    private fun enterGameMode(){
+        if(gameOverlay!=null)return
+        requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        configureImmersiveUi(true)
+        val root=findViewById<FrameLayout>(android.R.id.content)
+        val overlay=LayoutInflater.from(this).inflate(R.layout.activity_game,root,false)
+        root.addView(overlay,ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT))
+        gameOverlay=overlay
+        gameFps=overlay.findViewById(R.id.gameFps)
+        gameConsole=overlay.findViewById(R.id.gameConsole)
+        gameConsole?.text=logBuffer
+        val panel=overlay.findViewById<LinearLayout>(R.id.gameConsolePanel)
+        overlay.findViewById<Button>(R.id.gameMenu).setOnClickListener {
+            panel.visibility=if(panel.visibility==View.VISIBLE)View.GONE else View.VISIBLE
+            gameConsole?.text=logBuffer
+        }
+        overlay.findViewById<Button>(R.id.gameCloseLog).setOnClickListener{panel.visibility=View.GONE}
+        overlay.findViewById<Button>(R.id.gameExit).setOnClickListener{exitGameMode(true)}
+        for((id,mask) in listOf(R.id.gameUp to 0x0001,R.id.gameDown to 0x0002,
+            R.id.gameLeft to 0x0004,R.id.gameRight to 0x0008,
+            R.id.gameStart to 0x0010,R.id.gameBack to 0x0020,
+            R.id.gameLB to 0x0100,R.id.gameRB to 0x0200,
+            R.id.gameA to 0x1000,R.id.gameB to 0x2000,
+            R.id.gameX to 0x4000,R.id.gameY to 0x8000))gameTouch(id,mask)
+        gameTrigger(R.id.gameLT,4);gameTrigger(R.id.gameRT,5)
+        overlay.findViewById<AnalogPad>(R.id.gameLeftStick).onAxis={x,y->
+            if(RUST_READY){nativeSetAxis(0,x);nativeSetAxis(1,y)}
+        }
+        overlay.findViewById<AnalogPad>(R.id.gameRightStick).onAxis={x,y->
+            if(RUST_READY){nativeSetAxis(2,x);nativeSetAxis(3,y)}
+        }
+        val surface=overlay.findViewById<SurfaceView>(R.id.gameSurface)
+        surface.holder.addCallback(object:SurfaceHolder.Callback{
+            override fun surfaceCreated(h:SurfaceHolder){
+                videoActive=true
+                videoWorker.execute{if(NATIVE_READY)nativeSetVideoSurface(h.surface)}
+                videoHandler.removeCallbacks(videoTick);videoHandler.post(videoTick)
+            }
+            override fun surfaceChanged(h:SurfaceHolder,format:Int,width:Int,height:Int){}
+            override fun surfaceDestroyed(h:SurfaceHolder){
+                videoWorker.execute{if(NATIVE_READY)nativeSetVideoSurface(null)}
+            }
+        })
+        uiLog("Tela paisagem iniciada. Renderizacao GLES atual ainda e diagnostica, nao Minecraft.")
+    }
+    private fun exitGameMode(stop:Boolean){
+        val overlay=gameOverlay?:return
+        gameOverlay=null;gameFps=null;gameConsole=null
+        if(stop){continueRunning.set(false);if(RUST_READY)worker.execute{uiLog(nativeStopSession())}}
+        (overlay.parent as? ViewGroup)?.removeView(overlay)
+        requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        configureImmersiveUi(false)
+        val mainSurface=findViewById<SurfaceView>(R.id.videoSurface)
+        if(mainSurface.holder.surface.isValid){
+            videoWorker.execute{if(NATIVE_READY)nativeSetVideoSurface(mainSurface.holder.surface)}
+        }
+    }
+    @Deprecated("Use controls in the game overlay")
+    override fun onBackPressed(){
+        if(gameOverlay!=null){exitGameMode(true)}else super.onBackPressed()
+    }
     private fun startSelected(){
         lastSwap=0
         if(busy || !NATIVE_READY || !RUST_READY){log("Bibliotecas indisponíveis ou execução já iniciada.");return}
@@ -357,6 +474,12 @@ class MainActivity : Activity() {
                     if(sent%(4*1024*1024)==0)uiLog("PE transferido: ${sent/1024/1024} MiB / ${size/1024/1024} MiB")
                 }
                 if(!continueRunning.get())return@execute
+                val variableCatalog=nativeImportVariables()
+                if(variableCatalog!=null){
+                    val variableStatus=nativeConfigureImportVariables(variableCatalog)
+                    uiLog("VARIABLE IMPORTS: $variableStatus")
+                    if(!variableStatus.startsWith("OK|"))throw IllegalStateException(variableStatus)
+                }else uiLog("VARIABLE IMPORTS: lista indisponivel")
                 val catalog=nativeImportThunks()
                 if(catalog!=null){
                     val configured=nativeConfigureImportThunks(catalog)
@@ -391,7 +514,13 @@ class MainActivity : Activity() {
                             }
                         }
                     }
-                    if(!last.startsWith("RUNNING|"))break
+                    if(!last.startsWith("RUNNING|")){
+                        runOnUiThread {
+                            gameConsole?.text=logBuffer
+                            gameOverlay?.findViewById<LinearLayout>(R.id.gameConsolePanel)?.visibility=View.VISIBLE
+                        }
+                        break
+                    }
                 }
                 if(!continueRunning.get())uiLog(nativeStopSession())
             }catch(e:Throwable){uiLog("PARADA: ${e.message}")}
@@ -415,7 +544,7 @@ class MainActivity : Activity() {
             games.removeAll{it.uri==uri};games.add(0,Game(uri,name))
             while(games.size>12)games.removeAt(games.lastIndex)
             selected=uri;preparedUri=null;persistGames();renderGames();log("ISO adicionada: $name")
-            schedulePreparation("ISO selecionada")
+            launchOneClick()
         } else if(requestCode==PICK_KEY){
             if(busy)return
             worker.execute{
@@ -433,6 +562,7 @@ class MainActivity : Activity() {
                             preparedUri=null
                             if(response.contains("carregada")) {
                                 SecretKeyStore.save(this, key)
+                                keyReady=true
                                 "Chave carregada e armazenada cifrada no AndroidKeyStore"
                             } else response
                         } finally { key.fill(0) }
@@ -440,7 +570,7 @@ class MainActivity : Activity() {
                 }catch(e:Throwable){"Falha lendo chave: ${e.message}"}finally{buf.fill(0)}
                 uiLog(message)
                 if(message.contains("armazenada cifrada"))runOnUiThread {
-                    schedulePreparation("keys.bin")
+                    launchOneClick()
                 }
             }
         }
@@ -545,6 +675,7 @@ class MainActivity : Activity() {
         return super.onGenericMotionEvent(event)
     }
     override fun onDestroy(){
+        if(gameOverlay!=null)exitGameMode(false)
         videoActive=false
         videoHandler.removeCallbacks(videoTick)
         continueRunning.set(false)

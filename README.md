@@ -1,20 +1,21 @@
-# X360: GALAXY v5.4 — Xenon startup diagnostics and guest memory
+# X360: GALAXY v5.5 — XEX import diagnostics and immersive Android game shell
 
-Version 5.4 improves the verified v5.3 baseline without bundling games or keys.
+Incremental experiment based on v5.4, using Rust + C++20 + Kotlin/Android NDK. Tested on synthetic test programs only. **Not a playable Xbox 360 emulator for commercial titles**; actual `xboxkrnl`/`xam` implementations, Xenos microcode, VMX128, MMIO, EDRAM and the full kernel ABI remain incomplete.
 
-## Confirmed structural changes
+## Changes
 
-- A dedicated **sparse low virtual-memory mapping** supplements the existing 512 MiB high XEX image window. Only explicitly mapped low pages can be accessed; null pointers, guard pages and unmapped addresses remain faults.
-- The main PowerPC CPU thread now starts with an aligned `r1` stack pointer (`0x700FFF00`) and an initialized `r13` KPCR/TLS pointer (`0x71000000`). The compact KPCR follows documented offsets: TLS at `+0x00`, PCR self-pointer `+0x30`, stack high/low pointers `+0x70/+0x74`, thread pointer `+0x100`. The main TLS block is at `0x71010000` and the thread object at `0x71001000`.
-- Additional cooperative test threads receive their **own stack and PCR** rather than sharing the main stack. Low guest heap allocations begin at `0x20000000` and map on demand.
-- On a PowerPC fault, diagnostics include PC, raw big-endian opcode, decoded D/DS/X-form instruction, effective memory address (EA), r1, r3..r6, r10/r11, r13, r30 and r31. This is particularly useful for the reported `lwz r11,0x94(r30)` at `0x8214AB14`.
-- The XEX import decoder distinguishes **invalid records, unknown high-byte types, and all-zero/uninitialized import data**. Type-1 thunks are patched to an `sc 2`/NOP/BLR trampoline *only if* their descriptor and executable 16-byte destination are validated. The original import library/ordinal catalogue is cached for the Rust dispatcher so the patch doesn't erase it. No heuristic guesses or fabricated 142 imports.
-- The Rust HLE adds verified Xbox ordinals for low guest virtual-memory allocation/release (204/220), simple critical-section operations (293/302/304), TLS (338/340/341), simplified event primitives, and test-only video/ring services. Unsupported services remain visible failures. No unconditional `r3=0` stub blanket.
-- The Android root inset listener now accounts for status and navigation bar heights explicitly, with extra safety padding under the system clock. Version markers, Cargo and CI are set to v5.4.
-- Existing `VdGetSystemCommandBuffer` test ring at `0x9F000000` and `VdSwap`-gated PM4 submission to the GLES decoder remain connected through JNI and the Kotlin telemetry poller.
+- XEX import parser: reads `0x000103FF` XEX2 import library records as a bounded list, respects string table 4-byte alignment/name count, walks library records by individual record size and checks guest slot values. Validated `type 0` variable records are returned separately from `type 1` function thunks. Unknown `0x41...` etc. remain diagnostics; they are **not automatically treated as imports or overwritten**.
+- Rust variable import backing: validated type-0 descriptors receive individually allocated 256-byte cells at guest address `0x72000000+` (read/write, big-endian pointer in the original imported slot). This removes null pointers for *synthetic backing only*. The payload in unknown export cells is zero: **neither Xbox kernel globals nor XEX executable module metadata is fully emulated**; no guarantee `r30` is initialized.
+- HLE: still only supports explicitly implemented Xbox ordinals, and stops on unknown calls. No silent success on unimplemented imports.
+- One-tap launch: after saving a key through AndroidKeystore AES-GCM, tapping a game entry or choosing an ISO starts XDVDFS → AES → Basic/LZX → PE32 → validated imports → PPC session in the background while an immersive landscape screen opens. The UI offers transparent virtual analogs, D-Pad, A/B/X/Y, LB/RB, LT/RT, Start/Back, log overlay and exit menu. Rendering uses the preexisting diagnostic OpenGL ES SurfaceView and does not display Minecraft graphics.
+- Input data is sent through the current Rust JNI test controller bridge. `XamInputGetState` real Xbox ABI remains unimplemented.
 
-## Deliberate limitations
+## Expected v5.5 test on Minecraft title 0x4D530A81
 
-This is not a commercial-game-ready Xenon kernel, Xenos shader compiler, or Vulkan backend. In particular, **r30 is not an ABI-defined initial register**: setting it to Image Base to bypass a fault could hide a real loader/entry mismatch. The diagnostic now prints the first failing instruction and EA. Unknown import descriptor types cannot safely be reclassified as calls without the actual bytes. Xbox Live services, EDRAM, MMIO, VMX128, full CRT and thread ABI remain incomplete. CI only verifies compilation and synthetic unit tests; Minecraft boot requires an on-device test.
+Compare the new import diagnostics (`variaveis validadas`, `thunks identificados`, `[UNKNOWN]`) and `IMPORT_VARIABLE_CELLS` with v5.4. If import slots still report values that resemble instructions, collect the XEX descriptor/library metadata and PC/EA from the log rather than guessing that every slot is a thunk. We do not bundle any Xbox 360 title, retail key, or system binary.
 
-No console keys or retail game content are provided. Use independently acquired and lawful test inputs.
+## Build
+
+- `cmake -S . -B build && cmake --build build && ctest --test-dir build --output-on-failure`
+- `cd core && cargo test`
+- GitHub Actions `.github/workflows/build-x360-android-apk.yml` builds the debug ARM64 APK (Java 17, Gradle, Rust, NDK).

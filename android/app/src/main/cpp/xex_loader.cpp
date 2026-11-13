@@ -36,27 +36,35 @@ void parse_imports(Bytes d,uint32_t off, Headers& h) {
     const size_t str_at=off+12;
     const size_t str_end=str_at+string_size;
     std::vector<std::string> names;
-    // String table contains NUL-terminated strings and may include alignment.
-    for(size_t pos=str_at;pos<str_end;){
-        size_t stop=pos;
+    // XEX2 name entries are NUL terminated and padded separately to 4 bytes.
+    // string_table.count is the number of *names*, not the number of libraries;
+    // str_size is a byte count starting at string_table.data (offset +0xC).
+    // Follow the original on-disk offset, rather than scanning .text for names.
+    size_t cursor=str_at;
+    for(uint32_t i=0;i<count;++i){
+        if(cursor>=str_end)throw std::runtime_error("XEX2 import string table truncated");
+        size_t stop=cursor;
         while(stop<str_end && d[stop]!=0)++stop;
-        if(stop==str_end)break;
-        if(stop>pos && names.size()<128) names.emplace_back(reinterpret_cast<const char*>(d.data()+pos),stop-pos);
-        pos=stop+1;
+        if(stop==str_end || stop==cursor || stop-cursor>255)
+            throw std::runtime_error("XEX2 import library string invalid");
+        names.emplace_back(reinterpret_cast<const char*>(d.data()+cursor),stop-cursor);
+        const size_t next=(stop-str_at+4u)&~size_t(3);
+        cursor=str_at+next;
+        if(cursor>str_end)throw std::runtime_error("XEX2 import name padding exceeded table");
     }
     size_t p=(str_end+3u)&~size_t(3);
-    for(uint32_t i=0;i<count;++i){
+    for(uint32_t i=0;p<end && i<128;++i){
         if(p+40>end) throw std::runtime_error("Registro de importacao XEX truncado");
         uint32_t rec_size=be32(d,p);
         if(rec_size<40||rec_size>end-p) throw std::runtime_error("Tamanho de registro de imports invalido");
         uint16_t name_index=be16(d,p+36), n=be16(d,p+38);
         if(n>8192||40ull+uint64_t(n)*4>rec_size)throw std::runtime_error("Importacoes excessivas");
         ImportLibrary lib;
-        lib.name=name_index<names.size()?names[name_index]:"biblioteca#"+std::to_string(name_index);
+        lib.name=(name_index&0xFFu)<names.size()?names[name_index&0xFFu]:"biblioteca#"+std::to_string(name_index);
         lib.record_count=n;
         for(uint32_t j=0;j<n;++j) lib.guest_slots.push_back(be32(d,p+40+j*4));
         h.imports.push_back(std::move(lib));
-        p=(p+rec_size+3u)&~size_t(3);
+        p+=rec_size;
     }
 }
 }
