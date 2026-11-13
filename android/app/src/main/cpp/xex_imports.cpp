@@ -50,6 +50,23 @@ std::optional<uint32_t> checked_veneer_ordinal(const uint8_t bytes[16]) {
     if(auto ordinal=veneer_ordinal(bytes))return ordinal;
     return syscall_veneer_ordinal(bytes);
 }
+// Indirect imported-function stub:
+// lis r11,slot@ha; lwz r11,slot@l(r11); mtctr r11; bctr
+// (or lis/ori to load a guest pointer). The target MUST be one of the
+// type-0 slots from this XEX import library, or it is not a function thunk.
+std::optional<uint32_t> veneer_target_slot(const uint8_t bytes[16]){
+    const uint32_t a=word_be(bytes),b=word_be(bytes+4);
+    const uint32_t c=word_be(bytes+8),d=word_be(bytes+12);
+    if((a&0xFFFF0000u)!=0x3D600000u || c!=0x7D6903A6u ||
+       (d!=0x4E800420u && d!=0x4E800421u))return {};
+    const uint32_t upper=(a&0xFFFFu)<<16;
+    if((b&0xFFFF0000u)==0x816B0000u) {
+        return upper + static_cast<uint32_t>(static_cast<int32_t>(
+            static_cast<int16_t>(b&0xFFFFu)));
+    }
+    if((b&0xFFFF0000u)==0x616B0000u)return upper|(b&0xFFFFu);
+    return {};
+}
 } // namespace
 
 ImportInventory inspect_import_thunks(const std::vector<ImportLibrary>& libs,
@@ -66,6 +83,7 @@ ImportInventory inspect_import_thunks(const std::vector<ImportLibrary>& libs,
         struct Candidate{uint32_t address, ordinal;};
         std::vector<Candidate> possible_veneers;
         std::unordered_set<uint32_t> value_ordinals;
+        std::unordered_map<uint32_t,uint32_t> ordinal_by_variable_slot;
         for(auto address:lib.guest_slots) {
             ++result.records;
             if(address%4!=0 || address<base || uint64_t(address)+4>end) {
@@ -91,6 +109,7 @@ ImportInventory inspect_import_thunks(const std::vector<ImportLibrary>& libs,
                 if(!seen.insert(key).second){++result.malformed;continue;}
                 ++result.variables;
                 value_ordinals.insert(ordinal);
+                ordinal_by_variable_slot.emplace(address,ordinal);
                 result.variables_found.push_back({address,ordinal,module});
                 continue;
             }
@@ -137,6 +156,43 @@ ImportInventory inspect_import_thunks(const std::vector<ImportLibrary>& libs,
             result.thunks.push_back({c.address,c.ordinal,module,true});
             ++result.paired_veneers;
         }
+        // XEX2 sometimes lists an import's type-0 IAT slot but does not
+        // enumerate its indirect PowerPC veneer as a second guest record.
+        // Scan bounded executable ranges for *exact* four-instruction
+        // indirect veneers pointing into an already verified type-0 slot.
+        // Do not search for arbitrary branch targets or fabricate 142 thunks.
+        constexpr uint64_t kMaxScanPerLibrary=32ull*1024*1024;
+        constexpr uint64_t kScanChunk=16*1024;
+        uint64_t budget=kMaxScanPerLibrary;
+        if(!ordinal_by_variable_slot.empty()){
+            for(const auto& [from,to]:executable_ranges){
+                uint64_t lo=std::max<uint64_t>(from,base);
+                uint64_t hi=std::min<uint64_t>(to,end);
+                lo=(lo+3)&~uint64_t(3);
+                if(hi<=lo+15 || budget<16)continue;
+                const uint64_t scan_bytes=std::min<uint64_t>(hi-lo,budget);
+                hi=lo+scan_bytes;
+                budget-=scan_bytes;result.scanned_executable_bytes+=scan_bytes;
+                for(uint64_t chunk=lo;chunk+16<=hi;chunk+=kScanChunk){
+                    const size_t size=static_cast<size_t>(std::min<uint64_t>(kScanChunk+12,hi-chunk));
+                    std::vector<uint8_t> bytes(size);
+                    try{ram.read(static_cast<uint32_t>(chunk),bytes.data(),size);}
+                    catch(...){++result.malformed;continue;}
+                    const uint64_t stop=std::min<uint64_t>(kScanChunk,hi-chunk);
+                    for(size_t offset=0;offset<stop && offset+16<=size;offset+=4){
+                        auto imported_slot=veneer_target_slot(bytes.data()+offset);
+                        if(!imported_slot)continue;
+                        auto match=ordinal_by_variable_slot.find(*imported_slot);
+                        if(match==ordinal_by_variable_slot.end())continue;
+                        const uint32_t address=static_cast<uint32_t>(chunk+offset);
+                        const uint64_t key=(uint64_t(module)<<32)|address;
+                        if(!seen.insert(key).second)continue;
+                        result.thunks.push_back({address,match->second,module,true,*imported_slot});
+                        ++result.scanned_veneers;
+                    }
+                }
+            }
+        }
     }
     return result;
 }
@@ -166,8 +222,16 @@ size_t patch_import_thunks(const ImportInventory& inv,
             uint32_t(descriptor[2])<<8|descriptor[3];
         if(t.inferred_from_veneer){
             uint8_t code[16]{};ram.read(t.address,code,16);
-            const auto ordinal=checked_veneer_ordinal(code);
-            if(!ordinal || *ordinal!=t.ordinal)continue;
+            if(t.linked_variable_slot!=0){
+                const auto slot=veneer_target_slot(code);
+                if(!slot || *slot!=t.linked_variable_slot)continue;
+                uint8_t original[4]{};ram.read(*slot,original,4);
+                const uint32_t raw=word_be(original);
+                if((raw>>24)!=0 || (raw&0xFFFFu)!=t.ordinal)continue;
+            }else{
+                const auto ordinal=checked_veneer_ordinal(code);
+                if(!ordinal || *ordinal!=t.ordinal)continue;
+            }
         }else if((word>>24)!=1 || (word&0xffff)!=t.ordinal)continue;
         ram.write(t.address,patch.data(),patch.size());
         ++patched;
@@ -181,6 +245,7 @@ std::string ImportInventory::describe() const {
       <<", variaveis validadas="<<variables_found.size()<<", thunks identificados="<<thunks.size()<<", malformados="<<malformed
       <<", zerados/nao inicializados="<<uninitialized
       <<", candidatos de veneer="<<executable_candidates<<", veneers ligados por ordinal="<<paired_veneers
+      <<", veneers vinculados a IAT="<<scanned_veneers<<", bytes .text inspecionados="<<scanned_executable_bytes
       <<", tipos desconhecidos="<<unrecognized_types
       <<", bibliotecas nao mapeadas="<<unsupported_libraries
       <<"\nHLE: somente ordinais implementados podem ser chamados. Os demais causam pausa detalhada.";
@@ -188,7 +253,8 @@ std::string ImportInventory::describe() const {
         const auto& t=thunks[i];
         o<<"\n  "<<(t.module==1?"xboxkrnl.exe":"xam.xex")
           <<" ordinal="<<t.ordinal<<" thunk=0x"<<std::hex<<std::uppercase<<t.address<<std::dec
-          <<(t.inferred_from_veneer?" (veneer+ordinal validado)":" (descriptor type=1)");
+          <<(t.linked_variable_slot?" (veneer ligado a slot IAT verificado)":(
+              t.inferred_from_veneer?" (veneer+ordinal validado)":" (descriptor type=1)"));
     }
     if(thunks.size()>16)o<<"\n  ... "<<(thunks.size()-16)<<" thunks adicionais";
     for(size_t i=0;i<variables_found.size() && i<8;++i){
