@@ -1,3 +1,24 @@
+## X360 GALAXY v5.8 — Windows nativo (EXE)
+
+A versao Windows e compilada em `windows-latest` com Rust MSVC x64 e a
+biblioteca real `core/` (interpretador PowerPC da v5.8). O executavel
+`x360-galaxy.exe` oferece UI desktop escura/verde, biblioteca de arquivos,
+inspecao XDVDFS de ISOs, informacoes XEX2 e um painel de CPU com execucao
+de programas PowerPC brutos de teste (`.ppc`/`.bin`) com passo a passo,
+registros e autoteste. O botao de iniciar jogos retail fica desativado porque
+o runtime comercial ainda nao foi portado para o Windows.
+
+**Importante:** a build Windows nao roda Minecraft/Forza comercial:
+descriptografia XEX2, servicos kernel HLE e renderizacao Xenos/EDRAM
+precisam de integracao desktop. Nao ha jogos, chaves, drivers de
+console ou conteudo protegido embutidos.
+
+O workflow `.github/workflows/build.yml` executa testes e gera o EXE no
+artefato `X360-GALAXY-v5.8-Windows-x64-EXE`. O artefato do GitHub
+Actions vem em ZIP; extraia o EXE ou use o arquivo direto enviado no chat.
+
+---
+
 # X360: GALAXY v5.8 — compatibilidade de boot, imports XEX2 e snapshots PM4
 
 ## Implementado nesta atualização

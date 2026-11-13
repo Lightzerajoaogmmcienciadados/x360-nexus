@@ -1,28 +1,67 @@
-
-name: X360 Nexus Windows
+name: X360 GALAXY v5.8 Windows x64 EXE
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+  pull_request:
+    branches: [main]
+  push:
+    branches:
+      - main
+      - feature/x360-galaxy-v5.8-windows-exe
+    paths:
+      - 'src/**'
+      - 'core/**'
+      - 'Cargo.toml'
+      - '.github/workflows/build.yml'
+
+permissions:
+  contents: read
 
 jobs:
-  build:
+  windows-exe:
+    name: Build native GUI EXE on Windows x64
     runs-on: windows-latest
-
+    timeout-minutes: 45
     steps:
-      - name: Baixar codigo
+      - name: Checkout v5.8 source
         uses: actions/checkout@v4
 
-      - name: Instalar Rust
+      - name: Install Rust stable MSVC x64
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
 
-      - name: Compilar EXE
-        run: cargo build --release
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
 
-      - name: Disponibilizar EXE
+      - name: Test real PowerPC core on Windows
+        shell: pwsh
+        run: |
+          cargo test --manifest-path core/Cargo.toml --lib
+          if ($LASTEXITCODE -ne 0) { throw "CPU tests failed" }
+
+      - name: Build Windows GUI EXE
+        shell: pwsh
+        run: |
+          cargo build --locked --release --bin x360-galaxy --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw "Windows GUI compilation failed" }
+
+      - name: Verify native Windows executable
+        shell: pwsh
+        run: |
+          $exe = "target/x86_64-pc-windows-msvc/release/x360-galaxy.exe"
+          if (!(Test-Path $exe)) { throw "EXE was not produced" }
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          if ($bytes.Length -lt 1024 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+            throw "Invalid Windows PE file"
+          }
+          Get-FileHash $exe -Algorithm SHA256
+          Get-Item $exe | Format-List Name,Length
+
+      - name: Upload EXE for direct extraction
         uses: actions/upload-artifact@v4
         with:
-          name: X360-Nexus-Windows
-          path: target/release/x360-nexus.exe
+          name: X360-GALAXY-v5.8-Windows-x64-EXE
+          path: target/x86_64-pc-windows-msvc/release/x360-galaxy.exe
+          retention-days: 30
           if-no-files-found: error
