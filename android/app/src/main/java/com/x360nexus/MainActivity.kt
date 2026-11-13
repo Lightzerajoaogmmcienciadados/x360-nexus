@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** v5.1 Android UI, sparse guest RAM session and diagnostic GLES PM4 processing. */
+/** v5.6 immersive Android UI, sparse guest RAM and experimental PM4 GLES. */
 class MainActivity : Activity() {
     companion object {
         private const val PICK_ISO=100
@@ -93,6 +93,8 @@ class MainActivity : Activity() {
     private val videoQueued=AtomicBoolean(false)
     @Volatile private var videoActive=false
     private var videoTickCount=0
+    private var glFpsStart=0L
+    private var glFpsFrames=0
     private val videoTick=object:Runnable {
         override fun run() {
             if(!videoActive)return
@@ -102,9 +104,17 @@ class MainActivity : Activity() {
                         val msg=if(NATIVE_READY)nativeRenderVideoFrame() else "C++ JNI indisponivel"
                         if(msg.contains("failed") || msg.contains("indisponivel"))uiLog(msg)
                         videoTickCount++
+                        val now=SystemClock.elapsedRealtime()
+                        if(glFpsStart==0L)glFpsStart=now
+                        glFpsFrames++
+                        if(now-glFpsStart>=1000L){
+                            val fps=(glFpsFrames*1000L/(now-glFpsStart).coerceAtLeast(1L))
+                            glFpsStart=now;glFpsFrames=0
+                            runOnUiThread{gameFps?.text="${fps} FPS"}
+                        }
                         if(videoTickCount%45==0 && NATIVE_READY){
                             val stat=nativeVideoStats()
-                            runOnUiThread {findViewById<TextView>(R.id.videoStats).text=stat;gameFps?.text=stat.take(155)}
+                            runOnUiThread {findViewById<TextView>(R.id.videoStats).text=stat}
                         }
                     }catch(t:Throwable){uiLog("GPU EGL: ${t.message}")}
                     finally {videoQueued.set(false)}
@@ -392,6 +402,21 @@ class MainActivity : Activity() {
         root.addView(overlay,ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT))
         gameOverlay=overlay
         gameFps=overlay.findViewById(R.id.gameFps)
+        val controls=overlay.findViewById<View>(R.id.gameControls)
+        val margin=(8*resources.displayMetrics.density).toInt()
+        controls.setOnApplyWindowInsetsListener { view, insets ->
+            if(android.os.Build.VERSION.SDK_INT>=30){
+                val types=android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout()
+                val safe=insets.getInsetsIgnoringVisibility(types)
+                view.setPadding(safe.left+margin,safe.top+margin,safe.right+margin,safe.bottom+margin)
+            }else{
+                @Suppress("DEPRECATION")
+                view.setPadding(insets.systemWindowInsetLeft+margin,insets.systemWindowInsetTop+margin,
+                    insets.systemWindowInsetRight+margin,insets.systemWindowInsetBottom+margin)
+            }
+            insets
+        }
+        controls.requestApplyInsets()
         gameConsole=overlay.findViewById(R.id.gameConsole)
         gameConsole?.text=logBuffer
         val panel=overlay.findViewById<LinearLayout>(R.id.gameConsolePanel)
@@ -409,10 +434,10 @@ class MainActivity : Activity() {
             R.id.gameX to 0x4000,R.id.gameY to 0x8000))gameTouch(id,mask)
         gameTrigger(R.id.gameLT,4);gameTrigger(R.id.gameRT,5)
         overlay.findViewById<AnalogPad>(R.id.gameLeftStick).onAxis={x,y->
-            if(RUST_READY){nativeSetAxis(0,x);nativeSetAxis(1,y)}
+            if(RUST_READY){nativeSetAxis(0,x);nativeSetAxis(1,-y)}
         }
         overlay.findViewById<AnalogPad>(R.id.gameRightStick).onAxis={x,y->
-            if(RUST_READY){nativeSetAxis(2,x);nativeSetAxis(3,y)}
+            if(RUST_READY){nativeSetAxis(2,x);nativeSetAxis(3,-y)}
         }
         val surface=overlay.findViewById<SurfaceView>(R.id.gameSurface)
         surface.holder.addCallback(object:SurfaceHolder.Callback{
@@ -439,6 +464,10 @@ class MainActivity : Activity() {
         if(mainSurface.holder.surface.isValid){
             videoWorker.execute{if(NATIVE_READY)nativeSetVideoSurface(mainSurface.holder.surface)}
         }
+    }
+    override fun onWindowFocusChanged(hasFocus:Boolean){
+        super.onWindowFocusChanged(hasFocus)
+        if(hasFocus && gameOverlay!=null)configureImmersiveUi(true)
     }
     @Deprecated("Use controls in the game overlay")
     override fun onBackPressed(){
@@ -515,10 +544,7 @@ class MainActivity : Activity() {
                         }
                     }
                     if(!last.startsWith("RUNNING|")){
-                        runOnUiThread {
-                            gameConsole?.text=logBuffer
-                            gameOverlay?.findViewById<LinearLayout>(R.id.gameConsolePanel)?.visibility=View.VISIBLE
-                        }
+                        runOnUiThread { gameConsole?.text=logBuffer }
                         break
                     }
                 }
