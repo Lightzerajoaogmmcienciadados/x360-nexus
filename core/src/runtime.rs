@@ -75,6 +75,22 @@ fn fault_instruction(cpu:&Cpu,word:u32)->String {
             if op==24{"ori"}else{"oris"},word&0xFFFF),
         18=>return format!("DISASM=b{} 0x{:08X}",if word&1!=0{"l"}else{""},
             (cpu.pc as u64).wrapping_add(((((word&0x03FF_FFFC) as i32)<<6)>>6) as i64 as u64)),
+        16=>{
+            let bo=(word>>21)&31;let bi=(word>>16)&31;
+            let cr_bit=((cpu.cr>>(31-bi))&1)!=0;
+            let ctr_after=if bo&4!=0{cpu.ctr}else{cpu.ctr.wrapping_sub(1)};
+            let cond=bo&16!=0 || cr_bit==(bo&8!=0);
+            let counter=bo&4!=0 || ((ctr_after!=0)!=(bo&2!=0));
+            let target=if word&2!=0{(word as u16 as i16 as i64) as u64}
+                else{(cpu.pc as u64).wrapping_add(word as u16 as i16 as i64 as u64)};
+            return format!("DISASM=bc BO={bo} BI={bi} CRbit={} CTR=0x{:X} taken={} target=0x{target:08X}",
+                u8::from(cr_bit),cpu.ctr,cond&&counter);
+        },
+        19=>{
+            let xo=(word>>1)&1023;
+            if xo==16||xo==528 {return format!("DISASM={} BO={} BI={} LR=0x{:X} CTR=0x{:X}",
+                if xo==16{"bclr"}else{"bcctr"},(word>>21)&31,(word>>16)&31,cpu.lr,cpu.ctr);}
+        },
         17=>return "DISASM=sc (syscall)".into(),
         _=>(),
     }
@@ -315,6 +331,13 @@ impl Session {
                     }
                     self.cpu.pc=return_pc;
                     self.last_event=format!("{name} ordinal {ordinal}: {event}");
+                    if module==1 && ordinal==603 {
+                        let writes=self.mem.take_gpu_ring_writes();
+                        self.kernel.capture_gpu_ring_write(writes);
+                        if let Some((address,words))=writes {
+                            self.last_event=format!("{event}; PM4 guest write 0x{address:08X} ({words} dwords)");
+                        }
+                    }
                     if module==1 && ordinal==13 {
                         if !self.exec.iter().any(|&(lo,hi)|thread_entry>=lo &&
                               thread_entry.checked_add(4).is_some_and(|end|end<=hi)) {
@@ -659,5 +682,18 @@ pub extern "system" fn Java_com_x360nexus_MainActivity_nativeReadSessionMemory(
         let log=session.step_chunk(2);
         assert!(log.contains("INSTRUCAO #0: PC=0x8214AB10"),"{log}");
         assert!(log.contains("EA=0x00000094"),"{log}");
+    }
+}
+
+#[cfg(test)] mod v57_boot_branch_trace {
+    use super::*;
+    #[test] fn opcode_419a0088_is_decoded_and_condition_evaluated(){
+        let base=0x8214_AB10u64;
+        let mut session=Session::create(vec![0x41,0x9A,0x00,0x88,0x60,0,0,0],base,base,
+            &[base as i64,base as i64+8]).unwrap();
+        let report=session.step_chunk(1);
+        assert!(report.contains("DISASM=bc BO=12 BI=26"),"{report}");
+        assert!(report.contains("taken=false"),"{report}");
+        assert!(report.contains("INSTRUCAO #0: PC=0x8214AB10"),"{report}");
     }
 }

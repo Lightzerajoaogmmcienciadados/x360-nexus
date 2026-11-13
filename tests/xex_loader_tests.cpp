@@ -388,5 +388,36 @@ int main(){
     assert(inv.thunks.size()==1 && inv.thunks[0].ordinal==0x191);
     assert(patch_import_thunks(inv,{{base+0x1000,base+0x1010}},ram)==1);
   }
+  // v5.7: some executables expose only type-0 IAT records. Discover
+  // *actual* stubs in .text through their full indirect branch into IAT.
+  {
+    x360::xdvdfs::GuestRam ram;
+    constexpr uint32_t base=0x82000000;
+    ImportLibrary lib;lib.name="xboxkrnl.exe";
+    for(uint32_t i=0;i<142;++i){
+      const uint32_t ordinal=338+(i%100);
+      const uint32_t slot=base+0x4000+i*4;
+      const uint32_t address=base+0x1000+i*16;
+      const uint32_t target=0x816B0000u|(slot&0xFFFFu); // lwz r11,slot@l(r11)
+      const uint32_t ins[4]{0x3D608200u,target,0x7D6903A6u,0x4E800420u};
+      for(int j=0;j<4;++j){
+        const uint32_t be=ins[j];
+        const uint8_t word[4]{uint8_t(be>>24),uint8_t(be>>16),uint8_t(be>>8),uint8_t(be)};
+        ram.write(address+j*4,word,4);
+      }
+      const uint8_t descriptor[4]{0,0,uint8_t(ordinal>>8),uint8_t(ordinal)};
+      ram.write(slot,descriptor,4);
+      lib.guest_slots.push_back(slot); // no type-1 record in table
+    }
+    const auto inv=inspect_import_thunks({lib},base,0x6000,ram,
+                                          {{base+0x1000,base+0x2000}});
+    assert(inv.variables_found.size()==142);
+    assert(inv.scanned_veneers==142);
+    assert(inv.thunks.size()==142);
+    assert(patch_import_thunks(inv,{{base+0x1000,base+0x2000}},ram)==142);
+    uint8_t stub[8]{};
+    ram.read(base+0x1000,stub,8);
+    assert(stub[0]==0x44 && stub[3]==2 && stub[4]==0x4E && stub[7]==0x20);
+  }
   std::cout<<"XEX/PE, LZX uncompressed frame, SHA-1 chain, AES key unwrap: OK\n";
 }

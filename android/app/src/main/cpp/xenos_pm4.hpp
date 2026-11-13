@@ -19,10 +19,13 @@ struct Stats {
     uint64_t event_writes = 0;
     uint64_t alu_loads = 0;
     uint64_t nop_packets = 0;
+    uint64_t shader_uploads = 0;
+    uint64_t shader_dwords = 0;
     std::string last_event;
 };
-// Bounded PM4 packet parser for diagnostics. This is NOT the Xenos rasterizer
-// or a DMA/MMIO implementation. Words are already host-decoded BE dwords.
+// Bounded Xenos PM4 command processor. Guest buffers are validated through
+// an external reader. Actual shader translation, EDRAM and vertex fetch are
+// tracked as unsupported until implemented; no synthetic draws are issued.
 class CommandProcessor {
 public:
     static constexpr size_t kMaxQueuedWords = 16384;
@@ -32,13 +35,13 @@ public:
                 const GuestWords& read_guest = {});
     Stats stats() const;
     bool register_value(uint32_t index, uint32_t& value) const;
-    bool diagnostic_clear_color(uint32_t& rgba) const;
+    size_t uploaded_shader_words(unsigned stage) const;
 private:
     mutable std::mutex mutex_;
     std::deque<uint32_t> queue_;
     std::array<uint32_t, 0x10000> regs_{};
     Stats stats_;
-    bool diagnostic_color_set_ = false;
+    std::array<std::vector<uint32_t>,2> shader_images_{};
     void consume_locked(const GuestWords& read_guest);
     void write_register(uint32_t index, uint32_t value);
 };

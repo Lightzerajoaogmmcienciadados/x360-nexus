@@ -13,16 +13,44 @@ pub struct Memory {
     // mappings only. 0x00000000 stays unmapped to catch null pointer faults.
     low_pages: BTreeMap<u32,Box<[u8;PAGE]>>,
     low_perms: BTreeMap<u32,u8>,
+    // Detect bounded guest writes to the command ring; never fabricate PM4.
+    gpu_ring: Option<(usize,usize)>,
+    gpu_dirty: Option<(usize,usize)>,
 }
 impl Memory {
     pub const READ:u8=1; pub const WRITE:u8=2; pub const EXECUTE:u8=4;
     pub fn new(bytes:usize)->Self{Self::with_base(vec![0;bytes],0)}
     pub fn with_base(bytes:Vec<u8>,base:u64)->Self{
-        let size=bytes.len();Self{storage:Storage::Dense(bytes),size,base,perms:vec![7;(size+PAGE-1)/PAGE],low_pages:BTreeMap::new(),low_perms:BTreeMap::new()}
+        let size=bytes.len();Self{storage:Storage::Dense(bytes),size,base,perms:vec![7;(size+PAGE-1)/PAGE],low_pages:BTreeMap::new(),low_perms:BTreeMap::new(),gpu_ring:None,gpu_dirty:None}
     }
     pub fn sparse(base:u64,size:usize)->Result<Self,&'static str>{
         if size==0||size>512*1024*1024||base.checked_add(size as u64).is_none_or(|v|v>1u64<<32){return Err("invalid sparse RAM window");}
-        Ok(Self{storage:Storage::Sparse(BTreeMap::new()),size,base,perms:vec![0;(size+PAGE-1)/PAGE],low_pages:BTreeMap::new(),low_perms:BTreeMap::new()})
+        Ok(Self{storage:Storage::Sparse(BTreeMap::new()),size,base,perms:vec![0;(size+PAGE-1)/PAGE],low_pages:BTreeMap::new(),low_perms:BTreeMap::new(),gpu_ring:None,gpu_dirty:None})
+    }
+    pub fn track_gpu_ring(&mut self,base:usize,length:usize)->Result<(),&'static str>{
+        if length==0||length>65536||base&3!=0||self.offset(base,length).is_err(){
+            return Err("invalid command ring mapping");
+        }
+        self.gpu_ring=Some((base,length));
+        self.gpu_dirty=None;
+        Ok(())
+    }
+    fn note_guest_gpu_write(&mut self,at:usize,length:usize){
+        let Some((base,size))=self.gpu_ring else{return;};
+        let Some(end)=at.checked_add(length) else{return;};
+        let lo=at.max(base);
+        let hi=end.min(base+size);
+        if lo>=hi{return;}
+        let first=lo&!3;let last=(hi+3)&!3;
+        self.gpu_dirty=Some(match self.gpu_dirty{
+            Some((a,b))=>(a.min(first),b.max(last)),
+            None=>(first,last),
+        });
+    }
+    pub fn take_gpu_ring_writes(&mut self)->Option<(u32,u32)>{
+        let (lo,hi)=self.gpu_dirty.take()?;
+        if hi<=lo||hi-lo>16384||lo>u32::MAX as usize{return None;}
+        Some((lo as u32,((hi-lo)/4) as u32))
     }
     pub fn len(&self)->usize{self.size}
     pub fn is_sparse(&self)->bool{matches!(&self.storage,Storage::Sparse(_))}
@@ -156,7 +184,9 @@ impl Memory {
             return Ok(());
         }
         let off=self.offset(addr,src.len())?;self.check(off,src.len(),Self::WRITE)?;
-        self.store_bytes(off,src);Ok(())
+        self.store_bytes(off,src);
+        self.note_guest_gpu_write(addr,src.len());
+        Ok(())
     }
     /// Loader writes bypass guest R/W/X after validating the destination region.
     /// The guest CPU cannot call this function.
@@ -207,5 +237,22 @@ impl Memory {
         assert!(m.read_u32_be(0x94).is_err());
         m.unmap_region(0x71000000,0x1000).unwrap();
         assert!(m.read_u32_be(0x71000100).is_err());
+    }
+}
+#[cfg(test)] mod v57_ring_writes {
+    use super::*;
+    #[test] fn bounded_guest_ring_write_capture_and_reset(){
+        let mut m=Memory::sparse(0x82000000,512*1024*1024).unwrap();
+        let ring=0x9F000000usize;
+        m.set_page_permissions(ring as u64,65536,Memory::READ|Memory::WRITE).unwrap();
+        m.track_gpu_ring(ring,65536).unwrap();
+        m.write_u32_be(ring,0xC0001022).unwrap();
+        m.write_u32_be(ring+4,1234).unwrap();
+        assert_eq!(m.take_gpu_ring_writes(),Some((ring as u32,2)));
+        assert_eq!(m.take_gpu_ring_writes(),None);
+        m.write_u32_be(ring+20,0xCAFE).unwrap();
+        assert_eq!(m.take_gpu_ring_writes(),Some(((ring+20) as u32,1)));
+        m.write_u32_be(0x82000000,7).unwrap_err(); // unmapped executable image
+        assert_eq!(m.take_gpu_ring_writes(),None);
     }
 }
