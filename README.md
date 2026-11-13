@@ -1,8 +1,14 @@
-# X360: GALAXY v5.5 — XEX import diagnostics and immersive Android game shell
+# X360: GALAXY v5.5.1 — XEX2 library-table boundary regression fix
 
-Incremental experiment based on v5.4, using Rust + C++20 + Kotlin/Android NDK. Tested on synthetic test programs only. **Not a playable Xbox 360 emulator for commercial titles**; actual `xboxkrnl`/`xam` implementations, Xenos microcode, VMX128, MMIO, EDRAM and the full kernel ABI remain incomplete.
+This patch corrects the offset of `xex2_import_library` records. Per the open-source Xenia `xex2_opt_import_libraries` structure, the first record starts **exactly at 12 + `string_table.size`**, relative to the optional-header start. The previous parser unconditionally rounded this absolute offset up to a multiple of four, which could skip data for a non-four-byte-aligned table. The updated code also supports an unpadded final library name and rejects unexpected nonzero bytes in the string table.
 
-## Changes
+A dedicated regression test constructs a valid 13-byte string table with its first record at an unaligned address. The test rejects the older implementation and passes with the offset fix.
+
+All other v5.5 features are retained: AndroidKeyStore-protected external XEX key, one-click immersive Android launcher, bounded PowerPC guest memory and HLE diagnostics. **Compatibility with a particular retail title, Xbox kernel imports and real Xenos graphics has not been established**. This is an incremental loader correction, not a playable-game guarantee.
+
+Run `cmake -S . -B build && cmake --build build && ctest --test-dir build --output-on-failure` and `cargo test --manifest-path core/Cargo.toml`. The GitHub Actions workflow builds the Android ARM64 debug APK after host tests pass.
+
+
 
 - XEX import parser: reads `0x000103FF` XEX2 import library records as a bounded list, respects string table 4-byte alignment/name count, walks library records by individual record size and checks guest slot values. Validated `type 0` variable records are returned separately from `type 1` function thunks. Unknown `0x41...` etc. remain diagnostics; they are **not automatically treated as imports or overwritten**.
 - Rust variable import backing: validated type-0 descriptors receive individually allocated 256-byte cells at guest address `0x72000000+` (read/write, big-endian pointer in the original imported slot). This removes null pointers for *synthetic backing only*. The payload in unknown export cells is zero: **neither Xbox kernel globals nor XEX executable module metadata is fully emulated**; no guarantee `r30` is initialized.
