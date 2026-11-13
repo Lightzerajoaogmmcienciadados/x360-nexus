@@ -13,6 +13,7 @@ constexpr uint32_t kSetConstant2 = 0x55u;
 constexpr uint32_t kDrawIndex = 0x22u;
 constexpr uint32_t kDrawIndex2 = 0x36u;
 constexpr uint32_t kRegRmw = 0x21u;
+constexpr uint32_t kEventWrite = 0x46u;
 }
 CommandProcessor& processor() {static CommandProcessor instance; return instance;}
 void CommandProcessor::write_register(uint32_t index, uint32_t value) {
@@ -67,12 +68,16 @@ void CommandProcessor::consume_locked() {
         }else if(opcode==kSetConstant2 && count>=1){
             const uint32_t start=payload[0]&0xffffu;
             for(size_t i=1;i<count;++i)write_register(start+uint32_t(i-1),payload[i]);
+            if(start==0xC000u && count>=2)diagnostic_color_set_=true; // app-defined debug color, NOT an Xenos hardware register
             stats_.last_event="PM4 SET_CONSTANT2 stored";
         }else if(opcode==kRegRmw && count>=3){
             const uint32_t reg=payload[0]&0xffffu;
             if(reg>=regs_.size()){++stats_.unsupported;continue;}
             write_register(reg,(regs_[reg]&~payload[1])|payload[2]);
             stats_.last_event="PM4 REG_RMW applied";
+        }else if(opcode==kEventWrite && count>=1){
+            ++stats_.event_writes;
+            stats_.last_event="PM4 EVENT_WRITE observed; VdSwap and EDRAM resolve not emulated";
         }else if(opcode==kDrawIndex || opcode==kDrawIndex2){
             ++stats_.draws_seen;++stats_.unsupported;
             stats_.last_event="PM4 DRAW_INDX seen: guest shader/index translation unavailable";
@@ -82,6 +87,11 @@ void CommandProcessor::consume_locked() {
             stats_.last_event=out.str();
         }
     }
+}
+bool CommandProcessor::diagnostic_clear_color(uint32_t& rgba) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if(!diagnostic_color_set_)return false;
+    rgba=regs_[0xC000];return true;
 }
 Stats CommandProcessor::stats() const {std::lock_guard<std::mutex> lock(mutex_);return stats_;}
 bool CommandProcessor::register_value(uint32_t index,uint32_t& value) const {
