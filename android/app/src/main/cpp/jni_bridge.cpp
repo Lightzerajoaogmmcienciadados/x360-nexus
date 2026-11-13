@@ -207,6 +207,8 @@ Java_com_x360nexus_MainActivity_nativePrepareStagedXex(JNIEnv* env, jobject) {
         std::fill(pe.begin(),pe.end(),0); // discard host-side extracted image after staging
         g_prepared=std::move(prepared);
         g_ram=std::move(next);
+        // Inspect the immutable pre-patch descriptor snapshot before any
+        // thunk rewrite or variable binding. Do not invent expected counts.
         g_import_inventory=x360::xex::inspect_import_thunks(g_prepared->imports,
             g_prepared->base,g_prepared->image_size,*g_ram,g_prepared->executable_ranges);
         g_patched_thunks=x360::xex::patch_import_thunks(*g_import_inventory,
@@ -216,7 +218,9 @@ Java_com_x360nexus_MainActivity_nativePrepareStagedXex(JNIEnv* env, jobject) {
             "\nSecoes: "+std::to_string(g_prepared->sections.size())+
             "\nBibliotecas importadas: "+std::to_string(g_prepared->imports.size())+
             "\n"+g_import_inventory->describe()+
-            "\nThunks HLE de tipo 1 aplicados em seções executáveis: "+std::to_string(g_patched_thunks)+"\n"
+            "\nThunks HLE de tipo 1 aplicados em seções executáveis: "+std::to_string(g_patched_thunks)+
+            " (identificados="+std::to_string(g_import_inventory->thunks.size())+
+            "; verificados em .text; tipo1 brutos="+std::to_string(g_import_inventory->type1_records)+")\n"
             "CPU PowerPC v5.7 e PM4 experimental (sem traducao integral Xenos/GLSL).");
     } catch(const std::exception& e) {
         {

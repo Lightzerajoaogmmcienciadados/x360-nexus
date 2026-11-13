@@ -84,7 +84,8 @@ ImportInventory inspect_import_thunks(const std::vector<ImportLibrary>& libs,
         std::vector<Candidate> possible_veneers;
         std::unordered_set<uint32_t> value_ordinals;
         std::unordered_map<uint32_t,uint32_t> ordinal_by_variable_slot;
-        for(auto address:lib.guest_slots) {
+        for(size_t record=0;record<lib.guest_slots.size();++record) {
+            const uint32_t address=lib.guest_slots[record];
             ++result.records;
             if(address%4!=0 || address<base || uint64_t(address)+4>end) {
                 ++result.malformed;continue;
@@ -92,7 +93,15 @@ ImportInventory inspect_import_thunks(const std::vector<ImportLibrary>& libs,
             uint8_t bytes[4]{};
             try {ram.read(address,bytes,sizeof(bytes));}
             catch(...){++result.malformed;continue;}
-            const uint32_t value=word_be(bytes);
+            const uint32_t live=word_be(bytes);
+            // Never infer a function ordinal from a post-patch instruction.
+            // Prefer the verified snapshot taken directly after the PE map.
+            uint32_t value=live;
+            if(record<lib.original_descriptors.size() && lib.original_descriptors[record]){
+                value=*lib.original_descriptors[record];
+                ++result.prepatch_descriptors;
+                if(value!=live)++result.snapshot_mismatches;
+            }
             const uint32_t type=value>>24;
             const uint32_t ordinal=value&0xFFFFu;
             if(value==0){
@@ -114,7 +123,20 @@ ImportInventory inspect_import_thunks(const std::vector<ImportLibrary>& libs,
                 continue;
             }
             if(type==1 && ordinal!=0){
+                ++result.type1_records;
                 if(uint64_t(address)+16>end){++result.malformed;continue;}
+                if(!exec_contains(address,16,executable_ranges)){
+                    ++result.type1_outside_exec;
+                    if(result.examples.size()<12){
+                        std::ostringstream sample;
+                        sample<<name<<" type1 ordinal="<<std::dec<<ordinal
+                              <<" thunk=0x"<<std::hex<<std::uppercase<<address
+                              <<" outside declared executable ranges (not patched)";
+                        result.examples.push_back(sample.str());
+                    }
+                    continue;
+                }
+                ++result.type1_inside_exec;
                 const uint64_t key=(uint64_t(module)<<32)|address;
                 if(!seen.insert(key).second){++result.malformed;continue;}
                 result.thunks.push_back({address,ordinal,module,false});
@@ -246,6 +268,11 @@ std::string ImportInventory::describe() const {
       <<", zerados/nao inicializados="<<uninitialized
       <<", candidatos de veneer="<<executable_candidates<<", veneers ligados por ordinal="<<paired_veneers
       <<", veneers vinculados a IAT="<<scanned_veneers<<", bytes .text inspecionados="<<scanned_executable_bytes
+      <<", tipo1 antes do patch="<<type1_records
+      <<", tipo1 executaveis="<<type1_inside_exec
+      <<", tipo1 fora .text="<<type1_outside_exec
+      <<", snapshots prepatch="<<prepatch_descriptors
+      <<", diferencias snapshot/RAM="<<snapshot_mismatches
       <<", tipos desconhecidos="<<unrecognized_types
       <<", bibliotecas nao mapeadas="<<unsupported_libraries
       <<"\nHLE: somente ordinais implementados podem ser chamados. Os demais causam pausa detalhada.";

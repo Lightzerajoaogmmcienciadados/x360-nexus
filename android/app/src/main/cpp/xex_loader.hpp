@@ -14,7 +14,15 @@ namespace x360::xex {
 inline constexpr size_t kMaxXexBytes = 128ull * 1024 * 1024;
 inline constexpr size_t kMaxPeBytes = 128ull * 1024 * 1024;
 struct OptionalHeader { uint32_t key=0, value=0; };
-struct ImportLibrary { std::string name; uint16_t name_index=0; uint32_t record_count=0; std::vector<uint32_t> guest_slots; };
+struct ImportLibrary {
+    std::string name;
+    uint16_t name_index=0;
+    uint32_t record_count=0;
+    std::vector<uint32_t> guest_slots;
+    // Immutable pre-relocation/pre-patch import descriptors, aligned with
+    // guest_slots. Empty for callers using the direct unit-test inspector.
+    std::vector<std::optional<uint32_t>> original_descriptors;
+};
 struct Headers {
     uint32_t module_flags=0, pe_offset=0, security_offset=0;
     uint32_t image_base=0, entry_point=0, image_size=0;
@@ -45,6 +53,8 @@ struct ImportInventory {
     size_t records=0, variables=0, malformed=0, unsupported_libraries=0;
     size_t unrecognized_types=0, uninitialized=0, executable_candidates=0, paired_veneers=0;
     size_t scanned_veneers=0, scanned_executable_bytes=0;
+    size_t type1_records=0, type1_outside_exec=0, type1_inside_exec=0;
+    size_t prepatch_descriptors=0, snapshot_mismatches=0, sampled_records=0;
     std::vector<std::string> examples; // first eight unknown descriptors, never keys
 
     std::string describe() const;
