@@ -513,6 +513,7 @@ class MainActivity : Activity() {
                 if(catalog!=null){
                     val configured=nativeConfigureImportThunks(catalog)
                     uiLog("IMPORTS: $configured")
+                    if(!configured.startsWith("OK|"))throw IllegalStateException(configured)
                 }else uiLog("IMPORTS: catalogo indisponivel")
                 val launched=nativeLaunchSession()
                 uiLog(launched)

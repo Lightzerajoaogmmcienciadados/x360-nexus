@@ -34,6 +34,22 @@ std::optional<uint32_t> veneer_ordinal(const uint8_t bytes[16]) {
     if(d!=0x4E800420 && d!=0x4E800421)return {};
     return b&0xFFFF;
 }
+// Some homebrew-linked XEX2 import tables keep a prebuilt 16-byte
+// li r11,ordinal; sc 2; nop; blr import trampoline in their text section.
+// Accept it only if another catalog entry for the same library holds the
+// exact type-0 ordinal; never infer from unreferenced code addresses.
+std::optional<uint32_t> syscall_veneer_ordinal(const uint8_t bytes[16]) {
+    const uint32_t a=word_be(bytes),b=word_be(bytes+4);
+    const uint32_t c=word_be(bytes+8),d=word_be(bytes+12);
+    if((a&0xFFFF0000u)!=0x39600000u || b!=0x44000002u ||
+       c!=0x60000000u || d!=0x4E800020u) return {};
+    const uint32_t ordinal=a&0xFFFFu;
+    return ordinal?std::optional<uint32_t>(ordinal):std::nullopt;
+}
+std::optional<uint32_t> checked_veneer_ordinal(const uint8_t bytes[16]) {
+    if(auto ordinal=veneer_ordinal(bytes))return ordinal;
+    return syscall_veneer_ordinal(bytes);
+}
 } // namespace
 
 ImportInventory inspect_import_thunks(const std::vector<ImportLibrary>& libs,
@@ -95,7 +111,7 @@ ImportInventory inspect_import_thunks(const std::vector<ImportLibrary>& libs,
                exec_contains(address,16,executable_ranges)) {
                 uint8_t code[16]{};
                 try {ram.read(address,code,sizeof(code));
-                    if(auto linked=veneer_ordinal(code)) {
+                    if(auto linked=checked_veneer_ordinal(code)) {
                         ++result.executable_candidates;
                         possible_veneers.push_back({address,*linked});candidate=true;
                     }
@@ -128,10 +144,10 @@ size_t patch_import_thunks(const ImportInventory& inv,
     const std::vector<std::pair<uint32_t,uint32_t>>& executable_ranges,
     x360::xdvdfs::GuestRam& ram) {
     static constexpr std::array<uint8_t,16> patch{
-        0x44,0x00,0x00,0x02, // sc 2 (Rust intercepts only catalogued thunk PCs)
+        0x44,0x00,0x00,0x02, // sc 2; HLE dispatch keyed by PC and ordinal
+        0x4E,0x80,0x00,0x20, // blr (handler returns directly to validated LR)
         0x60,0x00,0x00,0x00, // nop
         0x60,0x00,0x00,0x00, // nop
-        0x4E,0x80,0x00,0x20, // blr
     };
     size_t patched=0;
     for(const auto& t:inv.thunks) {
@@ -150,7 +166,7 @@ size_t patch_import_thunks(const ImportInventory& inv,
             uint32_t(descriptor[2])<<8|descriptor[3];
         if(t.inferred_from_veneer){
             uint8_t code[16]{};ram.read(t.address,code,16);
-            const auto ordinal=veneer_ordinal(code);
+            const auto ordinal=checked_veneer_ordinal(code);
             if(!ordinal || *ordinal!=t.ordinal)continue;
         }else if((word>>24)!=1 || (word&0xffff)!=t.ordinal)continue;
         ram.write(t.address,patch.data(),patch.size());
@@ -161,7 +177,7 @@ size_t patch_import_thunks(const ImportInventory& inv,
 
 std::string ImportInventory::describe() const {
     std::ostringstream o;
-    o<<"IMPORTS: registros="<<records<<", variaveis="<<variables
+    o<<"IMPORT_THUNKS="<<thunks.size()<<"; IMPORTS: registros="<<records<<", variaveis="<<variables
       <<", variaveis validadas="<<variables_found.size()<<", thunks identificados="<<thunks.size()<<", malformados="<<malformed
       <<", zerados/nao inicializados="<<uninitialized
       <<", candidatos de veneer="<<executable_candidates<<", veneers ligados por ordinal="<<paired_veneers

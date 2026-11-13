@@ -344,5 +344,49 @@ int main(){
                                           {{base+0x1000,base+0x1010}});
     assert(inv_bad.thunks.empty() && inv_bad.paired_veneers==0);
   }
+  // v5.6 synthetic regression: the required 154 type-0 plus 142 type-1
+  // imports must be counted from actual descriptors, never a hard-coded
+  // Minecraft title-specific count.
+  {
+    x360::xdvdfs::GuestRam ram;
+    constexpr uint32_t base=0x82000000;
+    ImportLibrary lib;lib.name="xboxkrnl.exe";lib.name_index=0;
+    for(uint32_t i=0;i<154;++i){
+      uint32_t ordinal=0x100+i;
+      const uint8_t var[4]{0,0,uint8_t(ordinal>>8),uint8_t(ordinal)};
+      const uint32_t var_slot=base+0x4000+i*4;
+      ram.write(var_slot,var,sizeof(var));lib.guest_slots.push_back(var_slot);
+      if(i<142){
+        const uint8_t thunk[4]{1,0,uint8_t(ordinal>>8),uint8_t(ordinal)};
+        const uint32_t thunk_addr=base+0x1000+i*16;
+        ram.write(thunk_addr,thunk,sizeof(thunk));lib.guest_slots.push_back(thunk_addr);
+      }
+    }
+    const auto inventory=inspect_import_thunks({lib},base,0x6000,ram,
+                                                {{base+0x1000,base+0x2000}});
+    assert(inventory.variables_found.size()==154);
+    assert(inventory.thunks.size()==142);
+    assert(patch_import_thunks(inventory,{{base+0x1000,base+0x2000}},ram)==142);
+    uint8_t result[8]{};
+    ram.read(base+0x1000,result,sizeof(result));
+    assert(result[0]==0x44 && result[3]==0x02); // sc 2
+    assert(result[4]==0x4E && result[7]==0x20); // blr
+  }
+  // Explicitly cataloged PPC syscall veneer can also be recovered.
+  {
+    x360::xdvdfs::GuestRam ram;
+    constexpr uint32_t base=0x82000000;
+    const uint8_t veneer[16]{0x39,0x60,1,0x91, 0x44,0,0,2,
+                              0x60,0,0,0, 0x4E,0x80,0,0x20};
+    const uint8_t value[4]{0,0,1,0x91};
+    ram.write(base+0x1000,veneer,16);
+    ram.write(base+0x2000,value,4);
+    ImportLibrary lib;lib.name="xam.xex";
+    lib.guest_slots={base+0x2000,base+0x1000};
+    const auto inv=inspect_import_thunks({lib},base,0x3000,ram,
+                                          {{base+0x1000,base+0x1010}});
+    assert(inv.thunks.size()==1 && inv.thunks[0].ordinal==0x191);
+    assert(patch_import_thunks(inv,{{base+0x1000,base+0x1010}},ram)==1);
+  }
   std::cout<<"XEX/PE, LZX uncompressed frame, SHA-1 chain, AES key unwrap: OK\n";
 }
