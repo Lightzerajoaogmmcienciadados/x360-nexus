@@ -100,7 +100,7 @@
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
             android:orientation="horizontal" android:layout_marginTop="4dp">
             <Button android:id="@+id/loadKey" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-                android:text="CARREGAR CHAVE" android:textColor="#FFFFFF" android:backgroundTint="#303A32" />
+                android:text="CHAVE HEX / KEYS.BIN" android:textColor="#FFFFFF" android:backgroundTint="#303A32" />
             <Button android:id="@+id/configButton" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
                 android:text="CONFIGURAÇÕES" android:layout_marginStart="7dp" android:textColor="#FFFFFF" android:backgroundTint="#303A32" />
         </LinearLayout>

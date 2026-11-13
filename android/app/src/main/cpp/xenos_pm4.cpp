@@ -14,20 +14,24 @@ constexpr uint32_t kDrawIndex = 0x22u;
 constexpr uint32_t kDrawIndex2 = 0x36u;
 constexpr uint32_t kRegRmw = 0x21u;
 constexpr uint32_t kEventWrite = 0x46u;
+constexpr uint32_t kLoadAlu = 0x2fu;
+constexpr uint32_t kNop = 0x10u;
+constexpr uint32_t kShaderConstants = 0x56u;
 }
 CommandProcessor& processor() {static CommandProcessor instance; return instance;}
 void CommandProcessor::write_register(uint32_t index, uint32_t value) {
     if (index < regs_.size()) { regs_[index] = value; ++stats_.register_writes; }
     else { ++stats_.unsupported; stats_.last_event = "REG out of range"; }
 }
-bool CommandProcessor::submit(std::span<const uint32_t> words, std::string& error) {
+bool CommandProcessor::submit(std::span<const uint32_t> words, std::string& error,
+                              const GuestWords& read_guest) {
     if(words.size()>kMaxQueuedWords) {error="PM4: excessive submission";return false;}
     std::lock_guard<std::mutex> lock(mutex_);
     if(queue_.size()+words.size()>kMaxQueuedWords){error="PM4: queue full";return false;}
     queue_.insert(queue_.end(),words.begin(),words.end());
-    consume_locked(); return true;
+    consume_locked(read_guest); return true;
 }
-void CommandProcessor::consume_locked() {
+void CommandProcessor::consume_locked(const GuestWords& read_guest) {
     size_t consumed = 0;
     while(!queue_.empty() && consumed < kMaxQueuedWords) {
         const uint32_t header=queue_.front(), type=header>>30;
@@ -44,7 +48,7 @@ void CommandProcessor::consume_locked() {
         payload.reserve(count);
         for(size_t i=0;i<count;++i){payload.push_back(queue_.front());queue_.pop_front();}
         consumed+=count; ++stats_.packets;
-        if(type==kType2){stats_.last_event="PM4 NOP type 2";continue;}
+        if(type==kType2){++stats_.nop_packets;stats_.last_event="PM4 NOP type 2";continue;}
         if(type==kType0){
             const uint32_t first=header&0x7fffu;
             for(size_t i=0;i<count;++i)write_register(first+uint32_t(i),payload[i]);
@@ -52,7 +56,42 @@ void CommandProcessor::consume_locked() {
             continue;
         }
         const uint32_t opcode=(header>>8)&0x7fu;
-        if(opcode==kSetConstant && count>=1){
+        if(opcode==kNop) {
+            ++stats_.nop_packets;
+            stats_.last_event="PM4 type 3 NOP";
+        }else if(opcode==kLoadAlu){
+            // Xenos PM4_LOAD_ALU_CONSTANT: physical address, register/type,
+            // count. Read the actual guest buffer via the caller's bounded
+            // memory callback; do not synthesize constants on read failure.
+            if(count!=3){++stats_.unsupported;stats_.last_event="LOAD_ALU_CONSTANT invalid packet length";continue;}
+            const uint32_t address=payload[0]&0x3FFFFFFFu;
+            const uint32_t offset_type=payload[1];
+            const size_t words=payload[2]&0xFFFu;
+            const uint32_t kind=(offset_type>>16)&0xFFu;
+            uint32_t dest=offset_type&0x7FFu;
+            switch(kind){
+                case 0:dest+=0x4000;break;
+                case 1:dest+=0x4800;break;
+                case 2:dest+=0x4900;break;
+                case 3:dest+=0x4908;break;
+                case 4:dest+=0x2000;break;
+                default:++stats_.unsupported;stats_.last_event="LOAD_ALU_CONSTANT unsupported register class";continue;
+            }
+            if(words==0 || words>256 || uint64_t(dest)+words>regs_.size()){
+                ++stats_.unsupported;stats_.last_event="LOAD_ALU_CONSTANT exceeds bounded register range";continue;
+            }
+            std::vector<uint32_t> loaded;
+            if(!read_guest || !read_guest(address,words,loaded) || loaded.size()!=words){
+                ++stats_.unsupported;stats_.last_event="LOAD_ALU_CONSTANT: guest RAM not mapped/readable";continue;
+            }
+            for(size_t i=0;i<words;++i)write_register(dest+uint32_t(i),loaded[i]);
+            ++stats_.alu_loads;
+            stats_.last_event="PM4 LOAD_ALU_CONSTANT loaded from guest RAM";
+        }else if(opcode==kShaderConstants && count>=1){
+            const uint32_t dest=payload[0]&0xFFFFu;
+            for(size_t i=1;i<count;++i)write_register(dest+uint32_t(i-1),payload[i]);
+            stats_.last_event="PM4 SET_SHADER_CONSTANTS stored (microcode translation unavailable)";
+        }else if(opcode==kSetConstant && count>=1){
             const uint32_t offset_type=payload[0];
             uint32_t start=offset_type&0x7ffu;
             switch((offset_type>>16)&0xffu){

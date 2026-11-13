@@ -1,6 +1,11 @@
 package com.x360nexus
 
 import android.app.Activity
+import android.app.AlertDialog
+import android.text.InputType
+import android.view.WindowManager
+import android.widget.EditText
+import android.widget.Toast
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
@@ -63,6 +68,8 @@ class MainActivity : Activity() {
     private external fun nativeVideoStats():String
     private external fun nativeSubmitDemoPm4():String
     private external fun nativeProcessPm4(address:Long, dwords:Int):String
+    private external fun nativeSubmitPm4Bytes(packet:ByteArray):String
+    private external fun nativeReadSessionMemory(address:Long,length:Int):ByteArray?
     private external fun nativeSetButton(mask:Int, pressed:Boolean)
     private external fun nativeSetAxis(axis:Int, value:Int)
     private external fun nativeSetGpuCapabilities(renderer:String,gles:String,vulkan:String):String
@@ -114,6 +121,7 @@ class MainActivity : Activity() {
     private var busy=false
     private var logBuffer=""
     private var currentGpu="GPU ainda não detectada"
+    private var lastSwap=0L
 
     private fun log(message:String) {
         val stamped="[${SystemClock.uptimeMillis()/1000}s] $message\n"
@@ -200,6 +208,7 @@ class MainActivity : Activity() {
         vsync=findViewById(R.id.vsync)
         showFps=findViewById(R.id.fpsToggle)
         restoreSettings();readStoredGames();renderGames()
+        restoreXexKey()
         setupVideo()
         setupPad()
         applySafeInsets()
@@ -207,12 +216,7 @@ class MainActivity : Activity() {
             if(NATIVE_READY)log(nativeSubmitDemoPm4()) else log("PM4 JNI indisponivel")
         }
         findViewById<Button>(R.id.selectIso).setOnClickListener {if(!busy)picker()}
-        findViewById<Button>(R.id.loadKey).setOnClickListener {
-            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{
-                addCategory(Intent.CATEGORY_OPENABLE);type="application/octet-stream"
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            },PICK_KEY)
-        }
+        findViewById<Button>(R.id.loadKey).setOnClickListener { showKeyDialog() }
         findViewById<Button>(R.id.startGame).setOnClickListener {startSelected()}
         findViewById<Button>(R.id.stopGame).setOnClickListener {
             continueRunning.set(false)
@@ -225,7 +229,7 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.consoleToggle).setOnClickListener {
             console.visibility=if(console.visibility==View.VISIBLE)View.GONE else View.VISIBLE
         }
-        log("v5.1: Rust JNI=${RUST_READY}, C++ JNI=${NATIVE_READY}. CPU nativa + memória esparsa. Kernel e GPU Xenos ainda parciais.")
+        log("v5.2: Rust JNI=${RUST_READY}, C++ JNI=${NATIVE_READY}. CPU nativa + memória esparsa. Kernel e GPU Xenos ainda parciais.")
         worker.execute {
             val info=GpuDetector.query(this)
             currentGpu="${info.family}\n${info.renderer}\nOpenGL ES: ${info.version}\nVulkan: ${info.vulkan}"
@@ -233,7 +237,62 @@ class MainActivity : Activity() {
             runOnUiThread {gpuText.text=currentGpu;log(msg);saveSettings()}
         }
     }
+    private fun restoreXexKey() {
+        if(!NATIVE_READY)return
+        try {
+            val raw=SecretKeyStore.restore(this) ?: return
+            try {nativeSetXexKey(raw);log("Chave salva recuperada do AndroidKeyStore")}
+            finally {raw.fill(0)}
+        }catch(e:Exception){SecretKeyStore.clear(this);log("Chave salva não pôde ser recuperada; importe novamente")}
+    }
+
+    private fun showKeyDialog() {
+        val input=EditText(this).apply {
+            hint="32 caracteres hexadecimais (128 bits)"
+            inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            isSingleLine=true
+            setPadding(24,20,24,20)
+        }
+        val dlg=AlertDialog.Builder(this)
+            .setTitle("Chave XEX externa")
+            .setMessage("Cole 32 dígitos hexadecimais. A chave será cifrada com AndroidKeyStore; nenhum valor será registrado no log.")
+            .setView(input)
+            .setPositiveButton("APLICAR CHAVE HEX",null)
+            .setNeutralButton("IMPORTAR KEYS.BIN") { _, _ ->
+                startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type="application/octet-stream"
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                },PICK_KEY)
+            }
+            .setNegativeButton("CANCELAR",null)
+            .create()
+        dlg.setOnShowListener {
+            dlg.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val hex=input.text.toString().trim()
+                if(!Regex("[0-9a-fA-F]{32}").matches(hex)) {
+                    input.error="Use exatamente 32 caracteres de 0-9 e A-F"
+                    return@setOnClickListener
+                }
+                val raw=ByteArray(16) {i -> hex.substring(i*2,i*2+2).toInt(16).toByte()}
+                input.text.clear()
+                try {
+                    val result=nativeSetXexKey(raw)
+                    if(result.contains("carregada")) {
+                        SecretKeyStore.save(this,raw)
+                        log("Chave hexadecimal aplicada (16 bytes) e salva cifrada")
+                        dlg.dismiss()
+                    }else {log(result)}
+                }catch(_:Exception){log("Falha aplicando chave; dados não foram exibidos")}
+                finally {raw.fill(0)}
+            }
+        }
+        dlg.show()
+    }
+
     private fun startSelected(){
+        lastSwap=0
         if(busy || !NATIVE_READY || !RUST_READY){log("Bibliotecas indisponíveis ou execução já iniciada.");return}
         val iso=selected?:run{log("Adicione e selecione uma ISO primeiro.");return}
         setBusy(true);continueRunning.set(true)
@@ -277,8 +336,24 @@ class MainActivity : Activity() {
                     val status=last
                     runOnUiThread {
                         val ips=Regex("IPS=([0-9]+)").find(status)?.groupValues?.get(1)?:"0"
-                        telemetry.text="RAM virtual: 512 MiB (esparsa) | PE: ${size/1024/1024} MiB | IPS: $ips | GPU: GLES diagnostico"
+                        telemetry.text="RAM virtual: 512 MiB | PE: ${size/1024/1024} MiB | IPS: $ips | PM4: parcial"
                         log(status)
+                    }
+                    val state=Regex("GPU_RING=0x([0-9A-Fa-f]+); GPU_DWORDS=([0-9]+); SWAPS=([0-9]+)").find(status)
+                    if(state!=null && NATIVE_READY){
+                        val swaps=state.groupValues[3].toLongOrNull()?:0L
+                        val n=state.groupValues[2].toIntOrNull()?:0
+                        if(swaps!=lastSwap){
+                            lastSwap=swaps
+                            if(n in 1..4096){
+                                val address=state.groupValues[1].toLong(16)
+                                val raw=nativeReadSessionMemory(address,n*4)
+                                if(raw!=null){
+                                    val msg=try{nativeSubmitPm4Bytes(raw)}finally{raw.fill(0)}
+                                    uiLog("PM4/RAM: $msg")
+                                }
+                            }
+                        }
                     }
                     if(!last.startsWith("RUNNING|"))break
                 }
@@ -316,7 +391,13 @@ class MainActivity : Activity() {
                     }?:0
                     if(amount!=16) "keys.bin deve ter 16 bytes; leitura rejeitada" else {
                         val key=buf.copyOfRange(0,16)
-                        try{nativeSetXexKey(key)}finally{key.fill(0)}
+                        try {
+                            val response=nativeSetXexKey(key)
+                            if(response.contains("carregada")) {
+                                SecretKeyStore.save(this, key)
+                                "Chave carregada e armazenada cifrada no AndroidKeyStore"
+                            } else response
+                        } finally { key.fill(0) }
                     }
                 }catch(e:Throwable){"Falha lendo chave: ${e.message}"}finally{buf.fill(0)}
                 uiLog(message)
