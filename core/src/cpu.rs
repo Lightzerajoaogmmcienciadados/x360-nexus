@@ -14,7 +14,16 @@ fn mask32(mb:u32,me:u32)->u32{
 impl Cpu {
     pub fn new()->Self {Self{gpr:[0;32],pc:0,lr:0,ctr:0,cr:0,xer:0,halted:false,fpr:[0.0;32]}}
     fn cr_field(&mut self, field:u32, bits:u32){let shift=28-4*field;self.cr=(self.cr&!(15u32<<shift))|((bits&15)<<shift);}
-    fn cr0(&mut self, val:u64) {let s=val as i64;self.cr_field(0,if s<0 {8} else if s>0 {4} else {2});}
+    fn cr_bit(&self,bit:u32)->bool{((self.cr>>(31-bit))&1)!=0}
+    fn set_cr_bit(&mut self,bit:u32,value:bool){
+        let mask=1u32<<(31-bit);
+        if value{self.cr|=mask;}else{self.cr&=!mask;}
+    }
+    fn cr0(&mut self, val:u64) {
+        let s=val as i64;
+        let so=(self.xer>>31)&1;
+        self.cr_field(0,(if s<0 {8} else if s>0 {4} else {2})|so);
+    }
     fn cmp(&mut self,instr:u32,unsigned:bool){
         let f=(instr>>23)&7;let is64=(instr&(1<<21))!=0;let ra=((instr>>16)&31) as usize;
         let bits=if unsigned {
@@ -25,7 +34,7 @@ impl Cpu {
             let a=if is64 {self.gpr[ra] as i64}else{self.gpr[ra] as i32 as i64};
             let b=instr as u16 as i16 as i64;
             if a<b{8}else if a>b{4}else{2}
-        };self.cr_field(f,bits);
+        };self.cr_field(f,bits|((self.xer>>31)&1));
     }
     fn ea(&self,ra:usize,disp:i16)->Result<usize,String>{
         let base=if ra==0{0}else{self.gpr[ra]};
@@ -33,7 +42,7 @@ impl Cpu {
         usize::try_from(effective).map_err(|_|"effective address overflow".into())
     }
     fn branch_condition(&mut self,bo:u32,bi:u32)->bool{
-        let cr_ok=bo&16!=0 || (((self.cr>>(31-bi))&1)!=0)==(bo&8!=0);
+        let cr_ok=bo&16!=0 || self.cr_bit(bi)==(bo&8!=0);
         let ctr_ok=if bo&4!=0 {true}else{
             self.ctr=self.ctr.wrapping_sub(1);
             ((self.ctr!=0) != (bo&2!=0))
@@ -54,20 +63,34 @@ impl Cpu {
         let imm=ins as u16 as i16;
         let mut next=self.pc.checked_add(4).ok_or("PC overflow")?;
         match op {
+            7=>{self.gpr[rt]=(self.gpr[ra] as i64).wrapping_mul(imm as i64) as u64;},
             14=>{let base=if ra==0{0}else{self.gpr[ra]};self.gpr[rt]=base.wrapping_add(imm as i64 as u64);},
             15=>{let base=if ra==0{0}else{self.gpr[ra]};self.gpr[rt]=base.wrapping_add(((imm as i64)<<16) as u64);},
             24=>{self.gpr[ra]=self.gpr[rt] | (ins as u16 as u64);},
+            26=>{self.gpr[ra]=self.gpr[rt] ^ (ins as u16 as u64);},
+            27=>{self.gpr[ra]=self.gpr[rt] ^ ((ins as u16 as u64)<<16);},
+            29=>{self.gpr[ra]=self.gpr[rt] & ((ins as u16 as u64)<<16);self.cr0(self.gpr[ra]);},
             28=>{self.gpr[ra]=self.gpr[rt] & (ins as u16 as u64);self.cr0(self.gpr[ra]);}, // andi.
             25=>{self.gpr[ra]=self.gpr[rt] | ((ins as u16 as u64)<<16);},
-            21=>{let sh=(ins>>11)&31;let mb=(ins>>6)&31;let me=(ins>>1)&31;
-                let v=(self.gpr[rt] as u32).rotate_left(sh)&mask32(mb,me);
-                self.gpr[ra]=v as u64;if ins&1!=0{self.cr0(self.gpr[ra]);}},
+            20|21|23=>{ // rlwimi / rlwinm / rlwnm
+                let sh=if op==23 {(self.gpr[rb] as u32)&31}else{(ins>>11)&31};
+                let mb=(ins>>6)&31;let me=(ins>>1)&31;
+                let mask=mask32(mb,me);
+                let v=(self.gpr[rt] as u32).rotate_left(sh)&mask;
+                self.gpr[ra]=if op==20{((self.gpr[ra] as u32 & !mask)|v) as u64}else{v as u64};
+                if ins&1!=0{self.cr0(self.gpr[ra]);}
+            },
             10|11=>self.cmp(ins,op==10),
-            30=>{ // rldicl (MD-form subset), 64-bit rotate and clear left
+            30=>{ // rldicl, rldicr: MD-form bit 1 encodes SH[5].
+                let form=(ins>>2)&7;
                 let sh=((ins>>11)&31)|((ins&2)<<4);
-                let mb=((ins>>6)&31)|((ins&0x20)>>0);
+                let mask_end=((ins>>6)&31)|(ins&0x20);
                 let value=self.gpr[rt].rotate_left(sh);
-                self.gpr[ra]=value & (u64::MAX>>mb);
+                self.gpr[ra]=match form{
+                    0=>value & (u64::MAX>>mask_end), // rldicl: clear left
+                    1=>value & (u64::MAX<<(63-mask_end)), // rldicr: clear right
+                    _=>return Err(format!("opcode30 MD-form {form} unsupported")),
+                };
                 if ins&1!=0{self.cr0(self.gpr[ra]);}
             },
             8=>{ // subfic RT,RA,SIMM
@@ -137,9 +160,30 @@ impl Cpu {
             },
             19=>{
                 let xo=(ins>>1)&1023;let bo=(ins>>21)&31;let bi=(ins>>16)&31;
-                let destination=match xo{16=>self.lr,528=>self.ctr,_=>return Err(format!("opcode 19 XO={xo} unsupported"))};
-                if self.branch_condition(bo,bi){next=(destination&!3) as usize;}
-                if ins&1!=0{self.lr=(self.pc+4) as u64;}
+                match xo {
+                    0=>{ // mcrf: field-to-field copy, no implicit CR0 update.
+                        let bf=(ins>>23)&7;let bfa=(ins>>18)&7;
+                        let bits=(self.cr>>(28-4*bfa))&15;
+                        self.cr_field(bf,bits);
+                    },
+                    16|528=>{ // bclr / bcctr, LK, branch target from pre-link LR/CTR.
+                        if xo==528 && bo&4==0{return Err("bcctr: BO requests invalid CTR decrement".into());}
+                        let target=if xo==16{self.lr}else{self.ctr};
+                        let taken=self.branch_condition(bo,bi);
+                        if ins&1!=0{self.lr=next as u64;}
+                        if taken {next=(target&!3) as usize;}
+                    },
+                    257|129|289|225|33|449|417|193=>{ // CR bitwise logic
+                        let dst=(ins>>21)&31;let a=self.cr_bit((ins>>16)&31);
+                        let b=self.cr_bit((ins>>11)&31);
+                        let bit=match xo {
+                            257=>a&b,129=>a&!b,289=>!(a^b),225=>!(a&b),
+                            33=>!(a|b),449=>a|b,417=>a|!b,193=>a^b,_=>unreachable!()
+                        };
+                        self.set_cr_bit(dst,bit);
+                    },
+                    _=>return Err(format!("opcode 19 XO={xo} unsupported")),
+                }
             },
             31=>{
                 let xo=(ins>>1)&1023;
@@ -156,6 +200,15 @@ impl Cpu {
                         }; self.cr_field(field,bits);
                     },
                     19=>{self.gpr[rt]=self.cr as u64;}, // mfcr
+                    144=>{ // mtcrf: FXM 8-bit mask chooses affected CR fields
+                        let fxm=(ins>>12)&255;
+                        for field in 0..8u32 {
+                            if fxm&(0x80>>field)!=0 {
+                                let shift=28-4*field;
+                                self.cr_field(field,((self.gpr[rt] as u32)>>shift)&15);
+                            }
+                        }
+                    },
                     266=>{self.gpr[rt]=self.gpr[ra].wrapping_add(self.gpr[rb]);if ins&1!=0{self.cr0(self.gpr[rt]);}},
                     40=>{self.gpr[rt]=self.gpr[rb].wrapping_sub(self.gpr[ra]);if ins&1!=0{self.cr0(self.gpr[rt]);}}, // subf
                     316=>{self.gpr[ra]=self.gpr[rt]^self.gpr[rb];if ins&1!=0{self.cr0(self.gpr[ra]);}},
@@ -175,11 +228,32 @@ impl Cpu {
                             _=>unreachable!(),
                         }
                     },
-                    444=>{self.gpr[ra]=self.gpr[rt] | self.gpr[rb];if ins&1!=0{self.cr0(self.gpr[ra]);}},
+                    444|412|124|476|284|60=>{ // or, orc, nor, nand, eqv, andc
+                        let a=self.gpr[rt];let b=self.gpr[rb];
+                        self.gpr[ra]=match xo{444=>a|b,412=>a|!b,124=>!(a|b),
+                            476=>!(a&b),284=>!(a^b),60=>a&!b,_=>unreachable!()};
+                        if ins&1!=0{self.cr0(self.gpr[ra]);}
+                    },
+                    26=>{self.gpr[ra]=(self.gpr[rt] as u32).leading_zeros() as u64;},
+                    954=>{self.gpr[ra]=(self.gpr[rt] as i8 as i64) as u64;},
+                    922=>{self.gpr[ra]=(self.gpr[rt] as i16 as i64) as u64;},
+                    986=>{self.gpr[ra]=(self.gpr[rt] as i32 as i64) as u64;},
+                    104=>{self.gpr[rt]=(self.gpr[ra] as i64).wrapping_neg() as u64;
+                          if ins&1!=0{self.cr0(self.gpr[rt]);}},
+                    536=>{let n=(self.gpr[rb] as u32)&63;
+                          self.gpr[ra]=if n>31{0}else{((self.gpr[rt] as u32)>>n) as u64};},
+                    27=>{let n=(self.gpr[rb]&127) as u32;
+                         self.gpr[ra]=self.gpr[rt].checked_shl(n).unwrap_or(0);},
+                    539=>{let n=(self.gpr[rb]&127) as u32;
+                          self.gpr[ra]=self.gpr[rt].checked_shr(n).unwrap_or(0);},
+                    235=>{self.gpr[rt]=(self.gpr[ra] as i32).wrapping_mul(self.gpr[rb] as i32) as i64 as u64;
+                          if ins&1!=0{self.cr0(self.gpr[rt]);}},
+                    233=>{self.gpr[rt]=self.gpr[ra].wrapping_mul(self.gpr[rb]);
+                          if ins&1!=0{self.cr0(self.gpr[rt]);}},
                     339|467=>{
                         let spr=((ins>>16)&31)|(((ins>>11)&31)<<5);
-                        if xo==339 {self.gpr[rt]=match spr{8=>self.lr,9=>self.ctr,_=>return Err(format!("mfspr unsupported spr={spr}"))};}
-                        else {match spr{8=>self.lr=self.gpr[rt],9=>self.ctr=self.gpr[rt],_=>return Err(format!("mtspr unsupported spr={spr}"))};}
+                        if xo==339 {self.gpr[rt]=match spr{1=>self.xer as u64,8=>self.lr,9=>self.ctr,_=>return Err(format!("mfspr unsupported spr={spr}"))};}
+                        else {match spr{1=>self.xer=self.gpr[rt] as u32,8=>self.lr=self.gpr[rt],9=>self.ctr=self.gpr[rt],_=>return Err(format!("mtspr unsupported spr={spr}"))};}
                     },
                     _=>return Err(format!("opcode31 XO={xo} unsupported")),
                 }
@@ -242,5 +316,48 @@ use super::*;
         let fadd=(63u32<<26)|(4<<21)|(2<<16)|(3<<11)|(21<<1);
         m.write(8,&fadd.to_be_bytes()).unwrap();c.step_mut(&mut m).unwrap();
         assert_eq!(c.fpr[4],3.75);
+    }
+}
+#[cfg(test)] mod v57_condition_register_regression {
+    use super::*;
+    fn xform(op:u32,rd:u32,ra:u32,rb:u32,xo:u32)->u32 {
+        (op<<26)|(rd<<21)|(ra<<16)|(rb<<11)|(xo<<1)
+    }
+    #[test] fn minecraft_first_opcode_is_a_real_conditional_branch(){
+        let pc=0x8214_AB10usize;let op=0x419A_0088u32; // bc BO=12 BI=26 +0x88
+        let mut m=Memory::with_base(vec![0;0x100],pc as u64);
+        m.write(pc,&op.to_be_bytes()).unwrap();
+        let mut cpu=Cpu::new();cpu.pc=pc;
+        cpu.step_mut(&mut m).unwrap();assert_eq!(cpu.pc,pc+4); // CR6 bit 2 false
+        cpu.pc=pc;cpu.cr|=1<<(31-26);
+        cpu.step_mut(&mut m).unwrap();assert_eq!(cpu.pc,pc+0x88); // CR6 bit 2 true
+    }
+    #[test] fn compare_so_and_field_logic_are_bit_accurate(){
+        let mut mem=Memory::new(128);let mut cpu=Cpu::new();
+        cpu.xer=0x8000_0000;cpu.gpr[3]=5;
+        let cmpi=(11u32<<26)|(6<<23)|(3<<16)|5; // cmpwi cr6,r3,5
+        mem.write(0,&cmpi.to_be_bytes()).unwrap();
+        cpu.step_mut(&mut mem).unwrap();assert_eq!((cpu.cr>>4)&15,3); // EQ + SO
+        let crxor=(19u32<<26)|(26<<21)|(26<<16)|(26<<11)|(193<<1);
+        mem.write(4,&crxor.to_be_bytes()).unwrap();
+        cpu.step_mut(&mut mem).unwrap();assert!(!cpu.cr_bit(26));
+        let cror=(19u32<<26)|(26<<21)|(25<<16)|(25<<11)|(449<<1);
+        mem.write(8,&cror.to_be_bytes()).unwrap();
+        cpu.step_mut(&mut mem).unwrap();assert!(cpu.cr_bit(26)); // EQ bit from cr6
+        let mcrf=(19u32<<26)|(3<<23)|(6<<18);
+        mem.write(12,&mcrf.to_be_bytes()).unwrap();
+        cpu.step_mut(&mut mem).unwrap();assert_eq!((cpu.cr>>16)&15,(cpu.cr>>4)&15);
+    }
+    #[test] fn rldicr_and_logical_xor_execute(){
+        let mut mem=Memory::new(32);let mut cpu=Cpu::new();
+        cpu.gpr[3]=0x1234_5678_9ABC_DEF0;
+        // rldicr r4,r3,8,31: MD-form XO=1, ME=31
+        let ins=(30u32<<26)|(3<<21)|(4<<16)|(8<<11)|(31<<6)|(1<<2);
+        mem.write(0,&ins.to_be_bytes()).unwrap();
+        cpu.step_mut(&mut mem).unwrap();
+        assert_eq!(cpu.gpr[4],cpu.gpr[3].rotate_left(8)&0xFFFF_FFFF_0000_0000);
+        let xori=(26u32<<26)|(3<<21)|(5<<16)|0xFF;
+        mem.write(4,&xori.to_be_bytes()).unwrap();
+        cpu.step_mut(&mut mem).unwrap();assert_eq!(cpu.gpr[5],0x1234_5678_9ABC_DE0F);
     }
 }
