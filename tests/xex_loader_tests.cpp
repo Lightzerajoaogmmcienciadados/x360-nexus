@@ -309,5 +309,40 @@ int main(){
     assert(inv.uninitialized==1 && inv.malformed==0 && inv.thunks.empty());
     assert(inv.describe().find("nao inicializados=1")!=std::string::npos);
   }
+  // v5.6: A whole checked PowerPC veneer can be associated with a type-0
+  // ordinal by the embedded low immediate, when the XEX slot itself contains
+  // code (not an intact type-1 descriptor). Other PPC code must never match.
+  {
+    x360::xdvdfs::GuestRam ram;
+    constexpr uint32_t base=0x82000000;
+    const uint8_t veneer[16]{
+        0x3D,0x60,0,0,     // lis r11,0
+        0x61,0x6B,1,0x52,  // ori r11,r11,338
+        0x7D,0x69,0x03,0xA6, // mtctr r11
+        0x4E,0x80,0x04,0x20  // bctr
+    };
+    const uint8_t data[4]{0,0,1,0x52};
+    ram.write(base+0x1000,veneer,sizeof(veneer));
+    ram.write(base+0x2000,data,sizeof(data));
+    ImportLibrary lib;lib.name="xboxkrnl.exe";
+    lib.guest_slots={base+0x1000,base+0x2000};
+    const auto inv=inspect_import_thunks({lib},base,0x3000,ram,
+                                          {{base+0x1000,base+0x1010}});
+    assert(inv.records==2 && inv.variables==1 && inv.thunks.size()==1);
+    assert(inv.executable_candidates==1 && inv.paired_veneers==1);
+    assert(inv.thunks[0].inferred_from_veneer);
+    assert(inv.thunks[0].ordinal==338);
+    assert(patch_import_thunks(inv,{{base+0x1000,base+0x1010}},ram)==1);
+    uint8_t patched[4]{};ram.read(base+0x1000,patched,4);
+    assert(patched[0]==0x44 && patched[3]==2);
+    // A similar veneer with an unlisted ordinal must not be patched.
+    x360::xdvdfs::GuestRam bad;
+    const uint8_t different[16]{0x3D,0x60,0,0,0x61,0x6B,3,0xE7,
+                                 0x7D,0x69,0x03,0xA6,0x4E,0x80,0x04,0x20};
+    bad.write(base+0x1000,different,16);bad.write(base+0x2000,data,4);
+    const auto inv_bad=inspect_import_thunks({lib},base,0x3000,bad,
+                                          {{base+0x1000,base+0x1010}});
+    assert(inv_bad.thunks.empty() && inv_bad.paired_veneers==0);
+  }
   std::cout<<"XEX/PE, LZX uncompressed frame, SHA-1 chain, AES key unwrap: OK\n";
 }
