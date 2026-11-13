@@ -64,7 +64,7 @@ struct PeSection {
     uint32_t raw_address=0, raw_size=0, characteristics=0;
 };
 struct PreparedImage {
-    uint32_t base=0, pc=0, image_size=0;
+    uint32_t base=0, pc=0, image_size=0, title_id=0;
     std::vector<PeSection> sections;
     std::vector<ImportLibrary> imports;
     // Only these ranges may be fetched as executable code in the tracer.

@@ -126,6 +126,7 @@ pub struct Session {
     last_event:String,last_ips:f64, imports:BTreeMap<usize,(u32,u32)>,
     variables:BTreeMap<usize,(u32,u32,u32)>,
     first_instruction:Option<String>, known_variables:usize, boot_clock:Instant,
+    boot_compatibility:Option<String>,
 }
 impl Session {
     pub fn create_paged(base:u64,entry:u64,size:usize,ranges:&[i64])->Result<Self,String>{
@@ -157,7 +158,8 @@ impl Session {
         Ok(Self{cpu,mem,kernel,exec,scheduler:Scheduler::new(),image_base:base,
             image_size:size,loaded:0,steps:0,paused:None,last_event:String::new(),last_ips:0.0,
             imports:BTreeMap::new(),variables:BTreeMap::new(),
-            first_instruction:None,known_variables:0,boot_clock:Instant::now()})
+            first_instruction:None,known_variables:0,boot_clock:Instant::now(),
+            boot_compatibility:None})
     }
     pub fn create(image:Vec<u8>,base:u64,entry:u64,ranges:&[i64])->Result<Self,String>{
         let mut s=Self::create_paged(base,entry,image.len(),ranges)?;
@@ -291,6 +293,23 @@ impl Session {
         self.known_variables=known_variables;
         Ok(self.variables.len())
     }
+    /// Opt-in, title- and code-signature-guarded experiment for the
+    /// user's observed Minecraft entrypoint. This is NOT a documented
+    /// Xbox 360 OS invariant: all other titles retain architectural CR=0.
+    pub fn configure_boot_cr(&mut self,title_id:u32)->Result<String,String>{
+        if !self.ready() || self.steps!=0{return Err("boot CR requires uploaded image before first instruction".into());}
+        self.boot_compatibility=None;
+        if title_id!=0x4D53_0A81 {return Ok("OK|CR architecturally zero; no title-specific compatibility".into());}
+        if self.cpu.pc!=0x8214_AB10{return Ok(format!(
+            "OK|Minecraft title ID present but PC=0x{:08X} differs; CR unchanged",self.cpu.pc));}
+        let op=self.mem.fetch_u32_be(self.cpu.pc).map_err(str::to_string)?;
+        if op!=0x419A_0088{return Ok(format!(
+            "OK|Minecraft entry opcode 0x{op:08X} differs; CR unchanged"));}
+        // 0x419A0088 is bc BO=12 BI=26 +0x88: CR6.EQ must be set to take it.
+        self.cpu.cr|=1u32<<(31-26);
+        self.boot_compatibility=Some("Minecraft 0x4D530A81 exact-entry override: CR6.EQ=1 (hypothesis; NOT Xbox kernel ABI)".into());
+        Ok(format!("OK|{}; CR=0x{:08X}",self.boot_compatibility.as_deref().unwrap_or(""),self.cpu.cr))
+    }
     pub fn ready(&self)->bool{self.loaded==self.image_size}
     pub fn read_guest_bytes(&self,address:u64,length:usize)->Result<Vec<u8>,String>{
         if !self.ready() || length==0 || length>16384 || address>u32::MAX as u64 {
@@ -412,6 +431,8 @@ impl Session {
         let _=writeln!(s,"THREAD={} / {} (agendador de teste); IMPORT_THUNKS={}",
             self.scheduler.current_id(),self.scheduler.threads(),self.imports.len());
         let _=writeln!(s,"IMPORT_VARIABLE_CELLS={} EXPORTS_INICIALIZADOS={} (modelo parcial; outros nao implementados)",self.variables.len(),self.known_variables);
+        if let Some(compat)=&self.boot_compatibility{let _=writeln!(s,"BOOT_COMPAT={compat}");}
+        let _=writeln!(s,"CR=0x{:08X}; CR6_EQ={}",self.cpu.cr,(self.cpu.cr>>5)&1);
         if let Some(first)=&self.first_instruction{let _=writeln!(s,"{first}");}
         let (ring,words,swaps)=self.kernel.gpu_ring_snapshot();
         let _=writeln!(s,"GPU_RING=0x{ring:08X}; GPU_DWORDS={words}; SWAPS={swaps}");
@@ -460,6 +481,17 @@ pub extern "system" fn Java_com_x360nexus_MainActivity_nativeUploadSessionChunk(
         session.append(guest_addr as u64,&bytes)?;
         Ok(if session.ready(){"OK|PE guest pages complete".into()}else{"OK|PE chunk mapped".into()})
     })();
+    output(env,result.unwrap_or_else(|e|format!("ERROR|{e}")))
+}
+#[no_mangle]
+pub extern "system" fn Java_com_x360nexus_MainActivity_nativeConfigureBootCr(env:JNIEnv,_:JObject,title_id:jlong)->jstring{
+    let result=if !(0..=u32::MAX as i64).contains(&title_id){
+        Err("invalid title ID".into())
+    }else{
+        state().lock().map_err(|_|"CPU session mutex poisoned".to_string())
+            .and_then(|mut lock|lock.as_mut().ok_or("session not started".to_string())?
+                .configure_boot_cr(title_id as u32))
+    };
     output(env,result.unwrap_or_else(|e|format!("ERROR|{e}")))
 }
 #[no_mangle]
@@ -695,5 +727,35 @@ pub extern "system" fn Java_com_x360nexus_MainActivity_nativeReadSessionMemory(
         assert!(report.contains("DISASM=bc BO=12 BI=26"),"{report}");
         assert!(report.contains("taken=false"),"{report}");
         assert!(report.contains("INSTRUCAO #0: PC=0x8214AB10"),"{report}");
+    }
+}
+
+#[cfg(test)] mod v58_boot_compatibility {
+    use super::*;
+    fn minecraft()->Session{
+        Session::create(vec![0x41,0x9A,0x00,0x88,0x60,0,0,0],0x8214_AB10,0x8214_AB10,
+            &[0x8214_AB10,0x8214_AB18]).unwrap()
+    }
+    #[test] fn exact_title_and_entry_enable_cr6_eq_and_take_first_branch(){
+        let mut session=minecraft();
+        assert!(session.configure_boot_cr(0x4D53_0A81).unwrap().contains("CR6.EQ=1"));
+        assert_eq!(session.cpu.cr,0x20);
+        // Branch target leaves this tiny synthetic exec region; the CPU still
+        // executes the first bc correctly, then validation catches next fetch.
+        session.step_chunk(1);
+        assert_eq!(session.cpu.pc,0x8214_AB98);
+    }
+    #[test] fn no_global_cr_minecraft_hack(){
+        let mut session=minecraft();
+        assert!(session.configure_boot_cr(0x4D53_0A82).unwrap().starts_with("OK|"));
+        assert_eq!(session.cpu.cr,0);
+        let mut changed=minecraft();
+        changed.cpu.pc=0x8214_AB14;
+        changed.configure_boot_cr(0x4D53_0A81).unwrap();
+        assert_eq!(changed.cpu.cr,0);
+        let mut bad=minecraft();
+        bad.mem.load_image_bytes(0x8214_AB10,&0x60000000u32.to_be_bytes()).unwrap();
+        bad.configure_boot_cr(0x4D53_0A81).unwrap();
+        assert_eq!(bad.cpu.cr,0);
     }
 }

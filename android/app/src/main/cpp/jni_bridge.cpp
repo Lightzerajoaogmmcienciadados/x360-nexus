@@ -259,9 +259,10 @@ Java_com_x360nexus_MainActivity_nativePreparedInfo(JNIEnv* env,jobject){
     if(!g_prepared || !g_ram)return nullptr;
     const jlong data[]{static_cast<jlong>(g_prepared->base),static_cast<jlong>(g_prepared->pc),
         static_cast<jlong>(g_prepared->image_size),static_cast<jlong>(g_prepared->imports.size()),
-        static_cast<jlong>(g_ram->allocated_bytes())};
-    jlongArray out=env->NewLongArray(5);
-    if(out)env->SetLongArrayRegion(out,0,5,data);
+        static_cast<jlong>(g_ram->allocated_bytes()),
+        static_cast<jlong>(g_prepared->title_id)};
+    jlongArray out=env->NewLongArray(6);
+    if(out)env->SetLongArrayRegion(out,0,6,data);
     return out;
 }
 extern "C" JNIEXPORT jlongArray JNICALL

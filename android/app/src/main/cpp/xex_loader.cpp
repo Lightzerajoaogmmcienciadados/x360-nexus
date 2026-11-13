@@ -256,7 +256,8 @@ PreparedImage map_pe(Bytes pe,const Headers& h, x360::xdvdfs::GuestRam& ram){
     const size_t section_start=opt_offset+optsize;
     ensure(pe,section_start,size_t(nsec)*40,"Tabela de secoes PE truncada");
     PreparedImage result;
-    result.base=base; result.pc=entry; result.image_size=size_of_image;result.imports=h.imports;
+    result.base=base; result.pc=entry; result.image_size=size_of_image;
+    result.title_id=h.title_id;result.imports=h.imports;
     // Always map headers first. BSS is implicitly zero in sparse GuestRam.
     const size_t headers_len=std::min<size_t>(size_of_headers,pe.size());
     if(headers_len>size_of_image)throw std::runtime_error("PE headers maiores que SizeOfImage");

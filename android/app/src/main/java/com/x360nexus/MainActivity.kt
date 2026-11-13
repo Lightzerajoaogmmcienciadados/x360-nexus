@@ -59,6 +59,7 @@ class MainActivity : Activity() {
     private external fun nativePreparedSnapshot():ByteArray? // legacy diagnostic only
     private external fun nativePreparedChunk(address:Long,length:Int):ByteArray?
     private external fun nativeStartSessionPaged(base:Long,entry:Long,size:Int,ranges:LongArray):String
+    private external fun nativeConfigureBootCr(titleId:Long):String
     private external fun nativeUploadSessionChunk(address:Long,data:ByteArray):String
     private external fun nativeLaunchSession():String
     private external fun nativePollSession():String
@@ -503,6 +504,11 @@ class MainActivity : Activity() {
                     if(sent%(4*1024*1024)==0)uiLog("PE transferido: ${sent/1024/1024} MiB / ${size/1024/1024} MiB")
                 }
                 if(!continueRunning.get())return@execute
+                if(info.size>=6){
+                    val compat=nativeConfigureBootCr(info[5])
+                    uiLog("BOOT CR: $compat")
+                    if(!compat.startsWith("OK|"))throw IllegalStateException(compat)
+                }
                 val variableCatalog=nativeImportVariables()
                 if(variableCatalog!=null){
                     val variableStatus=nativeConfigureImportVariables(variableCatalog)
