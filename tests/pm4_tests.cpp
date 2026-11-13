@@ -26,6 +26,21 @@ int main(){
     const std::array<uint32_t,3> draw{type3(0x22,2),1,2};assert(p.submit(draw,err));
     assert(p.stats().draws_seen==1 && p.stats().unsupported==1);
     const std::array<uint32_t,1> nop{2u<<30};assert(p.submit(nop,err));
+    const std::array<uint32_t,2> nop3{type3(0x10,1),0u};
+    assert(p.submit(nop3,err));assert(p.stats().nop_packets==2);
+    const std::array<uint32_t,4> load{type3(0x2f,3),0x02000400u,0u,2u};
+    const CommandProcessor::GuestWords reader=[](uint32_t address,size_t count,std::vector<uint32_t>& data){
+        if(address!=0x02000400u||count!=2)return false;
+        data={0x3F800000u,0x40000000u};return true;
+    };
+    assert(p.submit(load,err,reader));
+    assert(p.stats().alu_loads==1);
+    assert(p.register_value(0x4000,value)&&value==0x3F800000u);
+    assert(p.register_value(0x4001,value)&&value==0x40000000u);
+    // A source address without a mapped guest memory reader is not silently
+    // interpreted as successful emulation.
+    assert(p.submit(load,err));assert(p.stats().unsupported>=2);
+
     std::vector<uint32_t> too_long(CommandProcessor::kMaxQueuedWords+1);
     assert(!p.submit(too_long,err));
     std::cout<<"PM4 packet0/2/3, event telemetry, diagnostic color, unsupported draw: PASS\n";
