@@ -81,7 +81,7 @@ class MainActivity : Activity() {
         line(root, "Wi-Fi 6 GHz exige hardware Wi-Fi 6E ou Wi-Fi 7. Hotspot não pode ser forçado por um aplicativo comum.", Color.LTGRAY)
 
         setContentView(ScrollView(this).apply {
-            fillViewport = true
+            isFillViewport = true
             addView(root)
         })
         updateNetwork()
