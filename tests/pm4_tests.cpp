@@ -20,7 +20,8 @@ int main(){
     assert(p.register_value(0x2000,value)&&value==123u);
     const std::array<uint32_t,3> clear_test{type3(0x55,2),0xC000u,0x005522FFu};
     assert(p.submit(clear_test,err));
-    assert(p.diagnostic_clear_color(value) && value==0x005522FFu);
+    assert(p.register_value(0xC000,value)&&value==0x005522FFu);
+    // A register write alone must never draw a fake clear color.
     const std::array<uint32_t,2> event_write{type3(0x46,1),0x00000007u};
     assert(p.submit(event_write,err));assert(p.stats().event_writes==1);
     const std::array<uint32_t,3> draw{type3(0x22,2),1,2};assert(p.submit(draw,err));
@@ -41,7 +42,16 @@ int main(){
     // interpreted as successful emulation.
     assert(p.submit(load,err));assert(p.stats().unsupported>=2);
 
+    // Guest shader microcode is accepted as data, not treated as a GLSL program.
+    const std::array<uint32_t,6> shader{type3(0x2B,5),0u,3u,
+                                        0xAAAABBBB,0x12345678,0xCAFEBABEu};
+    assert(p.submit(shader,err));
+    assert(p.uploaded_shader_words(0)==3);
+    assert(p.stats().shader_uploads==1);
+    const std::array<uint32_t,3> shader_bad{type3(0x2B,2),2u,9u};
+    assert(p.submit(shader_bad,err));
+    assert(p.stats().shader_uploads==1);
     std::vector<uint32_t> too_long(CommandProcessor::kMaxQueuedWords+1);
     assert(!p.submit(too_long,err));
-    std::cout<<"PM4 packet0/2/3, event telemetry, diagnostic color, unsupported draw: PASS\n";
+    std::cout<<"PM4 packet0/2/3, shader capture, guest register state, unsupported draw: PASS\n";
 }

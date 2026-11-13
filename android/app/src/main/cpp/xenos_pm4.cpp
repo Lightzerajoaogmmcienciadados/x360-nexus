@@ -17,6 +17,8 @@ constexpr uint32_t kEventWrite = 0x46u;
 constexpr uint32_t kLoadAlu = 0x2fu;
 constexpr uint32_t kNop = 0x10u;
 constexpr uint32_t kShaderConstants = 0x56u;
+constexpr uint32_t kImLoad=0x27u;
+constexpr uint32_t kImLoadImmediate=0x2bu;
 }
 CommandProcessor& processor() {static CommandProcessor instance; return instance;}
 void CommandProcessor::write_register(uint32_t index, uint32_t value) {
@@ -87,6 +89,33 @@ void CommandProcessor::consume_locked(const GuestWords& read_guest) {
             for(size_t i=0;i<words;++i)write_register(dest+uint32_t(i),loaded[i]);
             ++stats_.alu_loads;
             stats_.last_event="PM4 LOAD_ALU_CONSTANT loaded from guest RAM";
+        }else if(opcode==kImLoad || opcode==kImLoadImmediate){
+            // Xbox Xenos shader uploads contain *guest microcode*, not GLSL.
+            // Keep it available for the future translator, but never execute
+            // arbitrary microcode on the host GPU without ISA translation.
+            if(count<2){++stats_.unsupported;stats_.last_event="IM_LOAD short packet";continue;}
+            const uint32_t stage=payload[0]&3u;
+            const uint32_t start=payload[1]>>16;
+            const uint32_t words=payload[1]&0xFFFFu;
+            if(stage>=2||start!=0||words==0||words>4096){
+                ++stats_.unsupported;stats_.last_event="IM_LOAD invalid stage/range";continue;
+            }
+            std::vector<uint32_t> shader;
+            if(opcode==kImLoadImmediate){
+                if(count<2u+words){
+                    ++stats_.unsupported;stats_.last_event="IM_LOAD_IMMEDIATE truncated";continue;
+                }
+                shader.assign(payload.begin()+2,payload.begin()+2+words);
+            }else{
+                const uint32_t physical=payload[0]&~3u;
+                if(!read_guest||!read_guest(physical,words,shader)||shader.size()!=words){
+                    ++stats_.unsupported;stats_.last_event="IM_LOAD guest shader memory unavailable";continue;
+                }
+            }
+            shader_images_[stage]=std::move(shader);
+            ++stats_.shader_uploads;
+            stats_.shader_dwords+=words;
+            stats_.last_event="Xenos shader microcode captured (GLSL translation pending)";
         }else if(opcode==kShaderConstants && count>=1){
             const uint32_t dest=payload[0]&0xFFFFu;
             for(size_t i=1;i<count;++i)write_register(dest+uint32_t(i-1),payload[i]);
@@ -107,7 +136,6 @@ void CommandProcessor::consume_locked(const GuestWords& read_guest) {
         }else if(opcode==kSetConstant2 && count>=1){
             const uint32_t start=payload[0]&0xffffu;
             for(size_t i=1;i<count;++i)write_register(start+uint32_t(i-1),payload[i]);
-            if(start==0xC000u && count>=2)diagnostic_color_set_=true; // app-defined debug color, NOT an Xenos hardware register
             stats_.last_event="PM4 SET_CONSTANT2 stored";
         }else if(opcode==kRegRmw && count>=3){
             const uint32_t reg=payload[0]&0xffffu;
@@ -119,7 +147,7 @@ void CommandProcessor::consume_locked(const GuestWords& read_guest) {
             stats_.last_event="PM4 EVENT_WRITE observed; VdSwap and EDRAM resolve not emulated";
         }else if(opcode==kDrawIndex || opcode==kDrawIndex2){
             ++stats_.draws_seen;++stats_.unsupported;
-            stats_.last_event="PM4 DRAW_INDX seen: guest shader/index translation unavailable";
+            stats_.last_event="PM4 DRAW_INDX queued: Xenos shaders/vertex fetch/EDRAM unavailable";
         }else{
             ++stats_.unsupported;
             std::ostringstream out;out<<"PM4 type3 opcode 0x"<<std::hex<<opcode<<" unimplemented";
@@ -127,10 +155,9 @@ void CommandProcessor::consume_locked(const GuestWords& read_guest) {
         }
     }
 }
-bool CommandProcessor::diagnostic_clear_color(uint32_t& rgba) const {
+size_t CommandProcessor::uploaded_shader_words(unsigned stage) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    if(!diagnostic_color_set_)return false;
-    rgba=regs_[0xC000];return true;
+    return stage<shader_images_.size()?shader_images_[stage].size():0;
 }
 Stats CommandProcessor::stats() const {std::lock_guard<std::mutex> lock(mutex_);return stats_;}
 bool CommandProcessor::register_value(uint32_t index,uint32_t& value) const {
