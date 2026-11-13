@@ -365,7 +365,8 @@ pub extern "system" fn Java_com_x360nexus_MainActivity_nativeReadSessionMemory(
  #[test]fn paged_streaming_gt16mib(){
   let size=17*1024*1024;let mut s=Session::create_paged(0x82000000,0x82000000,size,&[0x82000000,0x82001000]).unwrap();
   for offset in (0..size).step_by(UPLOAD_CHUNK){let n=(size-offset).min(UPLOAD_CHUNK);s.append(0x82000000+offset as u64,&vec![0;n]).unwrap();}
-  assert!(s.ready());assert_eq!(s.mem.committed_bytes(),0);assert_eq!(s.mem.len(),GUEST_SIZE);
+  // The main-thread KPCR and TLS bootstrap intentionally commit two 4-KiB pages.
+  assert!(s.ready());assert_eq!(s.mem.committed_bytes(),8192);assert_eq!(s.mem.len(),GUEST_SIZE);
  }
  #[test]fn branches_obey_exec(){let code=vec![0x48,0,0,0];let mut s=Session::create(code,0x82000000,0x82000000,&[0x82000000,0x82000004]).unwrap();let msg=s.step_chunk(100);assert!(msg.starts_with("RUNNING|"));}
 }
@@ -375,12 +376,12 @@ pub extern "system" fn Java_com_x360nexus_MainActivity_nativeReadSessionMemory(
     #[test]
     fn unknown_real_import_pauses_with_ordinal_and_pc(){
         let base=0x82000000_i64;
-        let code=vec![0x01,0x00,0x00,0xCC, 0x60,0,0,0, 0x60,0,0,0, 0x60,0,0,0];
+        let code=vec![0x01,0x00,0x03,0xE7, 0x60,0,0,0, 0x60,0,0,0, 0x60,0,0,0];
         let mut s=Session::create(code,base as u64,base as u64,&[base,base+16]).unwrap();
-        assert_eq!(s.set_import_catalog(&[base,1,204]).unwrap(),1);
+        assert_eq!(s.set_import_catalog(&[base,1,999]).unwrap(),1);
         let log=s.step_chunk(1);
         assert!(log.starts_with("PAUSED|"),"{log}");
-        assert!(log.contains("xboxkrnl.exe ordinal 204"),"{log}");
+        assert!(log.contains("xboxkrnl.exe ordinal 999"),"{log}");
         assert!(log.contains("PC=0x82000000"),"{log}");
     }
     #[test]
