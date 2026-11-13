@@ -17,10 +17,14 @@ impl Scheduler {
     pub fn new()->Self{Self{queue:VecDeque::new(),current_id:1,next_id:2,quantum:64,ticks_in_quantum:0}}
     pub fn threads(&self)->usize{1+self.queue.len()}
     pub fn current_id(&self)->u32{self.current_id}
+    pub fn next_guest_id(&self)->u32{self.next_id}
     pub fn spawn(&mut self,pc:usize)->Result<u32,String>{
+        let mut cpu=Cpu::new();cpu.pc=pc;
+        self.spawn_cpu(cpu)
+    }
+    pub fn spawn_cpu(&mut self,cpu:Cpu)->Result<u32,String>{
         if self.queue.len()>=7{return Err("maximum 8 diagnostic guest threads".into());}
         let id=self.next_id;self.next_id=self.next_id.saturating_add(1);
-        let mut cpu=Cpu::new();cpu.pc=pc;
         self.queue.push_back(ScheduledThread{id,cpu});Ok(id)
     }
     pub fn tick(&mut self,current:&mut Cpu){

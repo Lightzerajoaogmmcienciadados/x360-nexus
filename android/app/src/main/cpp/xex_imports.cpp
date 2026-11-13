@@ -1,5 +1,6 @@
 #include "xex_loader.hpp"
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <iomanip>
 #include <sstream>
@@ -28,9 +29,30 @@ ImportInventory inspect_import_thunks(const std::vector<ImportLibrary>& libs,
                 (uint32_t(bytes[2])<<8)|uint32_t(bytes[3]);
             const uint32_t type=value>>24;
             const uint32_t ordinal=value&0xFFFFu;
+            if(value==0){
+                ++result.uninitialized;
+                if(result.examples.size()<8){
+                    std::ostringstream sample;
+                    sample<<name<<" slot=0x"<<std::hex<<std::uppercase<<address
+                          <<" uninitialized (zero import descriptor)";
+                    result.examples.push_back(sample.str());
+                }
+                continue;
+            }
             if(!ordinal){++result.malformed;continue;}
             if(type==0) {++result.variables;continue;}
-            if(type!=1 || uint64_t(address)+16>end){++result.malformed;continue;}
+            if(type!=1){
+                ++result.unrecognized_types;
+                if(result.examples.size()<8){
+                    std::ostringstream sample;
+                    sample<<name<<" slot=0x"<<std::hex<<std::uppercase<<address
+                          <<" value=0x"<<std::setw(8)<<std::setfill('0')<<value
+                          <<" high_byte=0x"<<type;
+                    result.examples.push_back(sample.str());
+                }
+                continue;
+            }
+            if(uint64_t(address)+16>end){++result.malformed;continue;}
             const uint64_t key=(uint64_t(module)<<32)|address;
             if(!seen.insert(key).second){++result.malformed;continue;}
             result.thunks.push_back({address,ordinal,module});
@@ -38,10 +60,43 @@ ImportInventory inspect_import_thunks(const std::vector<ImportLibrary>& libs,
     }
     return result;
 }
+size_t patch_import_thunks(const ImportInventory& inv,
+    const std::vector<std::pair<uint32_t,uint32_t>>& executable_ranges,
+    x360::xdvdfs::GuestRam& ram) {
+    static constexpr std::array<uint8_t,16> patch{
+        0x44,0x00,0x00,0x02, // sc 2 (Rust intercepts only catalogued thunk PCs)
+        0x60,0x00,0x00,0x00, // nop
+        0x60,0x00,0x00,0x00, // nop
+        0x4E,0x80,0x00,0x20, // blr
+    };
+    size_t patched=0;
+    for(const auto& t:inv.thunks) {
+        bool exec=false;
+        for(const auto& range:executable_ranges) {
+            if(t.address>=range.first && uint64_t(t.address)+patch.size()<=range.second) {
+                exec=true;break;
+            }
+        }
+        // Never turn data entries into code and never create thunks out of
+        // unknown descriptors merely to satisfy an import count.
+        if(!exec)continue;
+        uint8_t descriptor[4]{};
+        ram.read(t.address,descriptor,4);
+        const uint32_t word=uint32_t(descriptor[0])<<24|uint32_t(descriptor[1])<<16|
+            uint32_t(descriptor[2])<<8|descriptor[3];
+        if((word>>24)!=1 || (word&0xffff)!=t.ordinal)continue;
+        ram.write(t.address,patch.data(),patch.size());
+        ++patched;
+    }
+    return patched;
+}
+
 std::string ImportInventory::describe() const {
     std::ostringstream o;
     o<<"IMPORTS: registros="<<records<<", variaveis="<<variables
       <<", thunks identificados="<<thunks.size()<<", malformados="<<malformed
+      <<", zerados/nao inicializados="<<uninitialized
+      <<", tipos desconhecidos="<<unrecognized_types
       <<", bibliotecas nao mapeadas="<<unsupported_libraries
       <<"\nHLE: somente ordinais implementados podem ser chamados. Os demais causam pausa detalhada.";
     for(size_t i=0;i<thunks.size() && i<16;++i){
@@ -50,6 +105,7 @@ std::string ImportInventory::describe() const {
           <<" ordinal="<<t.ordinal<<" thunk=0x"<<std::hex<<std::uppercase<<t.address<<std::dec;
     }
     if(thunks.size()>16)o<<"\n  ... "<<(thunks.size()-16)<<" thunks adicionais";
+    for(const auto& sample:examples)o<<"\n  [UNKNOWN] "<<sample;
     return o.str();
 }
 } // namespace x360::xex

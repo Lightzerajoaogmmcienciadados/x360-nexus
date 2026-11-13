@@ -20,6 +20,15 @@ impl Kernel {
     pub fn state(&self,id:u32)->Option<ThreadState>{self.threads.get(&id).copied()}
     pub fn tick(&mut self){self.ticks=self.ticks.wrapping_add(1)}
     pub fn ticks(&self)->u64{self.ticks}
+    /// Reserve a low guest heap region for boot diagnostics. Only actual
+    /// allocations map pages; all other low addresses remain unmapped.
+    pub fn set_guest_heap_base(&mut self,base:u64)->Result<(),String>{
+        if base<0x0100_0000||base>=0x7000_0000||base&4095!=0 {
+            return Err("invalid low guest heap base".into());
+        }
+        self.next_heap=base;
+        Ok(())
+    }
     pub fn gpu_ring_snapshot(&self)->(u64,u32,u64){(self.gpu_ring_addr,self.gpu_ring_dwords,self.swaps)}
     pub fn register_secondary_stub(&mut self,library:&str,ordinal:u32)->Result<(),String>{
         if !matches!(library,"xboxkrnl.exe"|"xam.xex") || ordinal==0 {return Err("invalid HLE stub registration".into())}
@@ -127,15 +136,74 @@ impl Kernel {
 // Real XEX2 import-thunk ABI: only these verified ordinals have a
 // narrowly scoped implementation. Other ordinals must stop with diagnostics.
 impl Kernel {
+    fn xex_virtual_alloc(&mut self,gpr:&mut [u64;32],mem:&mut Memory)->Result<String,String>{
+        // Xbox ABI: base-address pointer, region-size pointer,
+        // allocation type, protection flags, debug memory flag.
+        let base_ptr=gpr[3] as usize;
+        let size_ptr=gpr[4] as usize;
+        let allocation_type=gpr[5] as u32;
+        let _protect=gpr[6] as u32;
+        let debug=gpr[7];
+        let desired=mem.read_u32_be(base_ptr).map_err(str::to_string)? as u64;
+        let size=mem.read_u32_be(size_ptr).map_err(str::to_string)? as u64;
+        if desired!=0 || debug!=0 || size==0 || size>16*1024*1024 || allocation_type&0x3000==0 {
+            gpr[3]=0xC000_000D; // STATUS_INVALID_PARAMETER
+            return Ok("NtAllocateVirtualMemory unsupported fixed address/flags: STATUS_INVALID_PARAMETER".into());
+        }
+        let rounded=(size+4095)&!4095;
+        let base=(self.next_heap+4095)&!4095;
+        let end=base.checked_add(rounded).ok_or("virtual heap overflow")?;
+        if base<0x2000_0000 || end>0x4000_0000 {
+            gpr[3]=0xC000_0017; // STATUS_NO_MEMORY
+            return Ok("NtAllocateVirtualMemory: STATUS_NO_MEMORY".into());
+        }
+        mem.set_page_permissions(base,rounded as usize,Memory::READ|Memory::WRITE)
+            .map_err(str::to_string)?;
+        self.next_heap=end;
+        mem.write_u32_be(base_ptr,base as u32).map_err(str::to_string)?;
+        mem.write_u32_be(size_ptr,rounded as u32).map_err(str::to_string)?;
+        self.allocations.insert(base,rounded as usize);
+        gpr[3]=0;
+        Ok(format!("NtAllocateVirtualMemory mapped 0x{base:08X}+0x{rounded:X} in low guest VA"))
+    }
+    fn xex_virtual_free(&mut self,gpr:&mut [u64;32],mem:&mut Memory)->Result<String,String>{
+        let base_ptr=gpr[3] as usize;
+        let size_ptr=gpr[4] as usize;
+        let addr=mem.read_u32_be(base_ptr).map_err(str::to_string)? as u64;
+        let alloc=self.allocations.get(&addr).copied();
+        if gpr[6]!=0 || alloc.is_none(){
+            gpr[3]=0xC000_000D;
+            return Ok(format!("NtFreeVirtualMemory invalid guest allocation 0x{addr:X}"));
+        }
+        let size=alloc.unwrap();
+        mem.unmap_region(addr,size).map_err(str::to_string)?;
+        self.allocations.remove(&addr);
+        mem.write_u32_be(size_ptr,size as u32).map_err(str::to_string)?;
+        gpr[3]=0;
+        Ok(format!("NtFreeVirtualMemory unmapped 0x{addr:08X}+0x{size:X}"))
+    }
+    /// Verified xboxkrnl ordinals; only a narrow subset of ABI behaviors is
+    /// modeled. Unsupported xboxkrnl/xam exports fail explicitly.
     pub fn dispatch_xex_thunk(&mut self,module:u32,ordinal:u32,
         gpr:&mut [u64;32],mem:&mut Memory)->Result<String,String>{
         if module!=1 {return Err(format!("xam.xex ordinal {ordinal}: HLE nao implementado"));}
         match ordinal {
-            338=>self.dispatch_private(3,gpr,mem),  // KeTlsAlloc
-            340=>self.dispatch_private(4,gpr,mem),  // KeTlsGetValue
-            341=>self.dispatch_private(5,gpr,mem),  // KeTlsSetValue
-            // Do not fake zero for NtAllocateVirtualMemory, thread creation,
-            // XamUserGetSigninState, VdSwap, etc. Their real ABI/state is absent.
+            204=>self.xex_virtual_alloc(gpr,mem),
+            220=>self.xex_virtual_free(gpr,mem),
+            293=>self.dispatch_private(8,gpr,mem), // RtlEnterCriticalSection
+            302=>self.dispatch_private(7,gpr,mem), // RtlInitializeCriticalSection
+            304=>self.dispatch_private(9,gpr,mem), // RtlLeaveCriticalSection
+            338=>self.dispatch_private(3,gpr,mem), // KeTlsAlloc
+            340=>self.dispatch_private(4,gpr,mem), // KeTlsGetValue
+            341=>self.dispatch_private(5,gpr,mem), // KeTlsSetValue
+            112=>self.dispatch_private(11,gpr,mem), // KeInitializeEvent, simplified
+            157=>self.dispatch_private(12,gpr,mem), // KeSetEvent, simplified
+            176=>self.dispatch_private(13,gpr,mem), // KeWaitForSingleObject, nonblocking
+            450=>self.dispatch_private(18,gpr,mem), // VdInitializeEngines (diagnostic)
+            458=>self.dispatch_private(10,gpr,mem), // VdQueryVideoMode (diagnostic)
+            445=>self.dispatch_private(20,gpr,mem), // VdGetSystemCommandBuffer (test ring)
+            603=>self.dispatch_private(15,gpr,mem), // VdSwap (test frame counter)
+            257=>self.dispatch_private(23,gpr,mem), // NtYieldExecution
             _=>Err(format!("xboxkrnl.exe ordinal {ordinal}: HLE nao implementado")),
         }
     }
@@ -167,4 +235,26 @@ impl Default for Kernel{fn default()->Self{Self::new()}}
    assert_eq!(k.gpu_ring_snapshot(),(0x9F00_0000,1,1));
  }
  #[test]fn virtual_memory(){let mut k=Kernel::new();let mut m=Memory::with_base(vec![0;1024*1024],0x82000000);let mut g=[0u64;32];g[3]=0x82000100;g[4]=0x82000104;m.write_u32_be(g[4] as usize,4096).unwrap();k.dispatch_private(1,&mut g,&mut m).unwrap();assert_eq!(g[3],0);assert!(m.read_u32_be(0x82000100).unwrap()>=0x82010000);}
+}
+
+#[cfg(test)] mod real_abi_tests {
+    use super::*;
+    #[test] fn allocate_free_uses_guest_be_pointers(){
+        let mut mem=Memory::sparse(0x8200_0000,512*1024*1024).unwrap();
+        mem.set_page_permissions(0x70010000,4096,Memory::READ|Memory::WRITE).unwrap();
+        let mut kernel=Kernel::new();kernel.set_guest_heap_base(0x20000000).unwrap();
+        let mut regs=[0u64;32];
+        regs[3]=0x70010000;regs[4]=0x70010004;regs[5]=0x3000;regs[6]=4;
+        mem.write_u32_be(0x70010000,0).unwrap();
+        mem.write_u32_be(0x70010004,8192).unwrap();
+        let msg=kernel.dispatch_xex_thunk(1,204,&mut regs,&mut mem).unwrap();
+        assert!(msg.contains("mapped"),"{msg}");assert_eq!(regs[3],0);
+        let addr=mem.read_u32_be(0x70010000).unwrap() as usize;
+        assert_eq!(addr,0x20000000);
+        mem.write_u32_be(addr,0xDEADBEEF).unwrap();
+        assert_eq!(mem.read_u32_be(addr).unwrap(),0xDEADBEEF);
+        regs[3]=0x70010000;regs[4]=0x70010004;regs[5]=0x8000;regs[6]=0;
+        kernel.dispatch_xex_thunk(1,220,&mut regs,&mut mem).unwrap();
+        assert_eq!(regs[3],0);assert!(mem.read_u32_be(addr).is_err());
+    }
 }

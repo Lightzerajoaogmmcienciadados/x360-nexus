@@ -445,12 +445,25 @@ class MainActivity : Activity() {
             }
         }
     }
-    /** Android 15 edge-to-edge: keep HUD and buttons below the system clock. */
+    /** Android 15/16 edge-to-edge: compensate status and navigation bars once. */
     private fun applySafeInsets(){
         val root=findViewById<android.widget.ScrollView>(R.id.rootScroll)
+        val density=resources.displayMetrics.density
+        val extraTop=(12*density).toInt()
+        val extraBottom=(8*density).toInt()
         root.setOnApplyWindowInsetsListener {view,insets ->
-            view.setPadding(view.paddingLeft,insets.systemWindowInsetTop,
-                view.paddingRight,insets.systemWindowInsetBottom)
+            val top:Int
+            val bottom:Int
+            if(android.os.Build.VERSION.SDK_INT>=30){
+                val bars=insets.getInsets(android.view.WindowInsets.Type.systemBars())
+                top=bars.top;bottom=bars.bottom
+            }else{
+                @Suppress("DEPRECATION")
+                top=insets.systemWindowInsetTop
+                @Suppress("DEPRECATION")
+                bottom=insets.systemWindowInsetBottom
+            }
+            view.setPadding(0,top+extraTop,0,bottom+extraBottom)
             insets
         }
         root.requestApplyInsets()

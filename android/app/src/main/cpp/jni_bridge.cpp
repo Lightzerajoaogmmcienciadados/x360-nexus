@@ -26,6 +26,8 @@ uint32_t g_loaded_crc=0;
 std::string g_loaded_path;
 std::vector<uint8_t> g_raw_xex; // Original staged bytes, retained after PE mapping.
 std::optional<x360::xex::PreparedImage> g_prepared;
+std::optional<x360::xex::ImportInventory> g_import_inventory;
+size_t g_patched_thunks=0;
 // In-memory only. Never saved, logged or embedded in the distributed APK.
 std::optional<std::array<uint8_t,16>> g_external_master_key;
 
@@ -60,6 +62,8 @@ Java_com_x360nexus_MainActivity_nativeSetXexKey(JNIEnv* env, jobject, jbyteArray
         if(g_external_master_key)std::fill(g_external_master_key->begin(),g_external_master_key->end(),0);
         g_external_master_key=new_key;
         g_prepared.reset();
+        g_import_inventory.reset();
+        g_patched_thunks=0;
     }
     std::fill(new_key.begin(),new_key.end(),0);
     return java_string(env,"Chave externa carregada em memoria (16 bytes). Valor nao exibido nem salvo.");
@@ -122,6 +126,8 @@ Java_com_x360nexus_MainActivity_nativeLoadDefaultXex(JNIEnv* env, jobject, jint 
             g_loaded_crc=loaded.crc32;
             g_raw_xex.clear();
             g_prepared.reset();
+            g_import_inventory.reset();
+            g_patched_thunks=0;
         }
         return java_string(env,"default.xex armazenado na RAM emulada!\n"
             "Arquivo: "+file.path+"\n"
@@ -201,18 +207,23 @@ Java_com_x360nexus_MainActivity_nativePrepareStagedXex(JNIEnv* env, jobject) {
         std::fill(pe.begin(),pe.end(),0); // discard host-side extracted image after staging
         g_prepared=std::move(prepared);
         g_ram=std::move(next);
-        const auto inv=x360::xex::inspect_import_thunks(g_prepared->imports,
+        g_import_inventory=x360::xex::inspect_import_thunks(g_prepared->imports,
             g_prepared->base,g_prepared->image_size,*g_ram);
+        g_patched_thunks=x360::xex::patch_import_thunks(*g_import_inventory,
+            g_prepared->executable_ranges,*g_ram);
         return java_string(env,"PE32 POWERPCBE preparado na RAM!\nBase: "+format_hex(g_prepared->base)+
             "\nEntry Point: "+format_hex(g_prepared->pc)+
             "\nSecoes: "+std::to_string(g_prepared->sections.size())+
             "\nBibliotecas importadas: "+std::to_string(g_prepared->imports.size())+
-            "\n"+inv.describe()+"\n"
+            "\n"+g_import_inventory->describe()+
+            "\nThunks HLE de tipo 1 aplicados em seções executáveis: "+std::to_string(g_patched_thunks)+"\n"
             "CPU Rust interpreta somente instrucoes conhecidas; a GPU Xenos ainda nao traduz shaders comerciais.");
     } catch(const std::exception& e) {
         {
             std::lock_guard<std::mutex> lock(g_memory_mutex);
             g_prepared.reset();
+            g_import_inventory.reset();
+            g_patched_thunks=0;
         }
         return java_string(env,std::string("XEX2 identificado, mas PE nao preparado: ")+e.what());
     }
@@ -323,8 +334,8 @@ extern "C" JNIEXPORT jlongArray JNICALL
 Java_com_x360nexus_MainActivity_nativeImportThunks(JNIEnv* env,jobject){
     std::lock_guard<std::mutex> lock(g_memory_mutex);
     if(!g_prepared || !g_ram)return nullptr;
-    const auto inv=x360::xex::inspect_import_thunks(g_prepared->imports,
-        g_prepared->base,g_prepared->image_size,*g_ram);
+    if(!g_import_inventory)return nullptr;
+    const auto& inv=*g_import_inventory;
     if(inv.thunks.size()>8192)return nullptr;
     std::vector<jlong> triples;triples.reserve(inv.thunks.size()*3);
     for(const auto& thunk:inv.thunks){

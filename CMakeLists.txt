@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(x360_galaxy_v53_tests VERSION 5.3.0 LANGUAGES CXX)
+project(x360_galaxy_v54_tests VERSION 5.4.0 LANGUAGES CXX)
 enable_testing()
 add_library(x360_core STATIC android/app/src/main/cpp/xdvdfs.cpp android/app/src/main/cpp/xex_loader.cpp android/app/src/main/cpp/xex_crypto.cpp android/app/src/main/cpp/xex_lzx.cpp android/app/src/main/cpp/xex_imports.cpp)
 target_include_directories(x360_core PUBLIC android/app/src/main/cpp)

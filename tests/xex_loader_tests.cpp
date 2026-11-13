@@ -222,6 +222,33 @@ int main(){
     assert(inv.thunks[0].address==base+0x1000);
     assert(inv.thunks[0].ordinal==338 && inv.thunks[0].module==1);
     assert(inv.describe().find("ordinal=338")!=std::string::npos);
+    // Only valid verified type-1 stubs in executable ranges may be patched.
+    const auto count=patch_import_thunks(inv,{{base+0x1000,base+0x1010}},imported_ram);
+    assert(count==1);
+    uint8_t patched[16]{};
+    imported_ram.read(base+0x1000,patched,16);
+    assert(patched[0]==0x44 && patched[1]==0 && patched[2]==0 && patched[3]==2);
+    imported_ram.read(base+0x1020,patched,4);
+    assert(patched[0]==0 && patched[3]==4); // variable never patched
+  }
+  {
+    x360::xdvdfs::GuestRam ram;
+    constexpr uint32_t base=0x82000000;
+    const std::array<uint8_t,4> unknown{0x7c,0x63,0x22,0x14};
+    ram.write(base+0x1040,unknown.data(),4);
+    ImportLibrary lib;lib.name="xam.xex";lib.guest_slots={base+0x1040};
+    const auto inv=inspect_import_thunks({lib},base,0x2000,ram);
+    assert(inv.unrecognized_types==1 && inv.malformed==0 && inv.thunks.empty());
+    assert(inv.describe().find("UNKNOWN")!=std::string::npos);
+    assert(patch_import_thunks(inv,{{base+0x1040,base+0x1050}},ram)==0);
+  }
+  {
+    x360::xdvdfs::GuestRam ram;
+    constexpr uint32_t base=0x82000000;
+    ImportLibrary lib;lib.name="xboxkrnl.exe";lib.guest_slots={base+0x1000};
+    const auto inv=inspect_import_thunks({lib},base,0x2000,ram);
+    assert(inv.uninitialized==1 && inv.malformed==0 && inv.thunks.empty());
+    assert(inv.describe().find("nao inicializados=1")!=std::string::npos);
   }
   std::cout<<"XEX/PE, LZX uncompressed frame, SHA-1 chain, AES key unwrap: OK\n";
 }
