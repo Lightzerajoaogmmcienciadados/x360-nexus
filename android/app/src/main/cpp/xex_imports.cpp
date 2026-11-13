@@ -40,7 +40,13 @@ ImportInventory inspect_import_thunks(const std::vector<ImportLibrary>& libs,
                 continue;
             }
             if(!ordinal){++result.malformed;continue;}
-            if(type==0) {++result.variables;continue;}
+            if(type==0) {
+                const uint64_t key=(uint64_t(module)<<32)|address;
+                if(!seen.insert(key).second){++result.malformed;continue;}
+                ++result.variables;
+                result.variables_found.push_back({address,ordinal,module});
+                continue;
+            }
             if(type!=1){
                 ++result.unrecognized_types;
                 if(result.examples.size()<8){
@@ -94,7 +100,7 @@ size_t patch_import_thunks(const ImportInventory& inv,
 std::string ImportInventory::describe() const {
     std::ostringstream o;
     o<<"IMPORTS: registros="<<records<<", variaveis="<<variables
-      <<", thunks identificados="<<thunks.size()<<", malformados="<<malformed
+      <<", variaveis validadas="<<variables_found.size()<<", thunks identificados="<<thunks.size()<<", malformados="<<malformed
       <<", zerados/nao inicializados="<<uninitialized
       <<", tipos desconhecidos="<<unrecognized_types
       <<", bibliotecas nao mapeadas="<<unsupported_libraries
@@ -105,6 +111,11 @@ std::string ImportInventory::describe() const {
           <<" ordinal="<<t.ordinal<<" thunk=0x"<<std::hex<<std::uppercase<<t.address<<std::dec;
     }
     if(thunks.size()>16)o<<"\n  ... "<<(thunks.size()-16)<<" thunks adicionais";
+    for(size_t i=0;i<variables_found.size() && i<8;++i){
+        const auto& var=variables_found[i];
+        o<<"\n  [VARIABLE] "<<(var.module==1?"xboxkrnl.exe":"xam.xex")
+         <<" ordinal="<<var.ordinal<<" slot=0x"<<std::hex<<std::uppercase<<var.address<<std::dec;
+    }
     for(const auto& sample:examples)o<<"\n  [UNKNOWN] "<<sample;
     return o.str();
 }
