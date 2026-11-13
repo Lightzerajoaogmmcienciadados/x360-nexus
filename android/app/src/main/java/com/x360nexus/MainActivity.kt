@@ -26,7 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** v4.5 UI and diagnostic execution; no actual commercial Xbox 360 game support. */
+/** v5.1 Android UI, sparse guest RAM session and diagnostic GLES PM4 processing. */
 class MainActivity : Activity() {
     companion object {
         private const val PICK_ISO=100
