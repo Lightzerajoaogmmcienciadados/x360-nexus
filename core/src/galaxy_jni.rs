@@ -4,6 +4,11 @@ use std::{fs::File,os::fd::FromRawFd,sync::{Mutex,OnceLock}};
 use crate::{loader,input::Controller};
 static PAD:OnceLock<Mutex<Controller>>=OnceLock::new();
 fn pad()->&'static Mutex<Controller>{PAD.get_or_init(||Mutex::new(Controller::default()))}
+/// Snapshot shared by touchscreen/USB/Bluetooth input and XamInputGetState HLE.
+/// If a controller lock is poisoned, return a released neutral state.
+pub(crate) fn controller_snapshot()->Controller{
+    pad().lock().map(|state|*state).unwrap_or_default()
+}
 fn output(mut env:JNIEnv,msg:String)->jstring{env.new_string(msg).map(|s|s.into_raw()).unwrap_or(std::ptr::null_mut())}
 #[no_mangle]pub extern "system" fn Java_com_x360nexus_MainActivity_nativeInspectIso(env:JNIEnv,_:JObject,fd:jint)->jstring{
  if fd<0{return output(env,"FD invalido".into())}

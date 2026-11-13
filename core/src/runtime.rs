@@ -257,8 +257,10 @@ impl Session {
                         .map_err(str::to_string)?;},
                     431=>{self.mem.write(pointer as usize,b"game:\\default.xex\0")
                         .map_err(str::to_string)?;},
-                    446|447=>{ // VdGlobalDevice / VdGlobalXamDevice are null on boot
-                        self.mem.write_u32_be(pointer as usize,0).map_err(str::to_string)?;
+                    446|447=>{ // Bounded synthetic device object, not a working Xenos driver.
+                        let object=pointer+0x40;
+                        self.mem.write_u32_be(pointer as usize,object as u32).map_err(str::to_string)?;
+                        self.mem.write_u32_be(object as usize,object as u32).map_err(str::to_string)?;
                     },
                     448=>{self.mem.write_u32_be(pointer as usize,500).map_err(str::to_string)?;},
                     _=>recognized=false,
@@ -301,6 +303,9 @@ impl Session {
             }
             let result=if let Some(&(module,ordinal))=self.imports.get(&pc) {
                 let name=if module==1 {"xboxkrnl.exe"}else{"xam.xex"};
+                // Real ExCreateThread takes guest entry at r7 and context at r8.
+                let thread_entry=self.cpu.gpr[7] as usize;
+                let thread_context=self.cpu.gpr[8];
                 let result=self.kernel.dispatch_xex_thunk(module,ordinal,&mut self.cpu.gpr,&mut self.mem);
                 result.and_then(|event| {
                     let return_pc=self.cpu.lr as usize;
@@ -310,6 +315,17 @@ impl Session {
                     }
                     self.cpu.pc=return_pc;
                     self.last_event=format!("{name} ordinal {ordinal}: {event}");
+                    if module==1 && ordinal==13 {
+                        if !self.exec.iter().any(|&(lo,hi)|thread_entry>=lo &&
+                              thread_entry.checked_add(4).is_some_and(|end|end<=hi)) {
+                            return Err(format!("ExCreateThread: invalid entry 0x{thread_entry:08X}"));
+                        }
+                        let mut child=Cpu::new();child.pc=thread_entry;child.gpr[3]=thread_context;
+                        let future_id=self.scheduler.next_guest_id();
+                        setup_additional_thread(&mut self.mem,&mut child,future_id)?;
+                        let id=self.scheduler.spawn_cpu(child)?;
+                        self.last_event=format!("{event}; guest thread {id} scheduled");
+                    }
                     Ok(())
                 })
             }else if opcode>>26==17 {
@@ -477,7 +493,7 @@ pub extern "system" fn Java_com_x360nexus_MainActivity_nativeConfigureImportThun
         let mut guard=state().lock().map_err(|_|"session lock poisoned")?;
         let session=guard.as_mut().ok_or("no active session")?;
         let installed=session.set_import_catalog(&values)?;
-        Ok(format!("OK|{installed} imported function thunks identified; only TLS ordinals implemented"))
+        Ok(format!("OK|{installed} imported function thunks registered for verified HLE dispatch"))
     })();
     output(env,msg.unwrap_or_else(|e|format!("ERROR|{e}")))
 }
@@ -623,5 +639,25 @@ pub extern "system" fn Java_com_x360nexus_MainActivity_nativeReadSessionMemory(
         assert_eq!(info,0x20);
         let clock=s.mem.read_u32_be((EXPORT_VARIABLE_BASE+EXPORT_VARIABLE_STRIDE) as usize).unwrap();
         assert_eq!(clock,500);
+    }
+}
+#[cfg(test)] mod v56_hle_input_and_first_pc {
+    use super::*;
+    #[test] fn xam_reads_virtual_gamepad_state(){
+        let mut kernel=Kernel::new();let mut mem=Memory::new(4096);let mut gpr=[0u64;32];
+        gpr[3]=0;gpr[5]=0x100;
+        assert!(kernel.dispatch_xex_thunk(2,0x191,&mut gpr,&mut mem).is_ok());
+        assert_eq!(gpr[3],0);
+        assert_eq!(mem.read_u32_be(0x100).unwrap(),0);
+        assert_eq!(mem.read_u32_be(0x104).unwrap(),0);
+        assert_eq!(kernel.dispatch_xex_thunk(2,0x210,&mut gpr,&mut mem).is_ok(),true);
+        assert_eq!(gpr[3],0);
+    }
+    #[test] fn minecraft_entry_diagnostic_keeps_exact_first_pc(){
+        let pc=0x8214AB10u64;
+        let mut session=Session::create(vec![0x60,0,0,0,0x81,0x7E,0,0x94],pc,pc,&[pc as i64,pc as i64+8]).unwrap();
+        let log=session.step_chunk(2);
+        assert!(log.contains("INSTRUCAO #0: PC=0x8214AB10"),"{log}");
+        assert!(log.contains("EA=0x00000094"),"{log}");
     }
 }

@@ -12,9 +12,10 @@ pub struct Kernel{
     safe_stubs:BTreeSet<(String,u32)>,events:BTreeMap<u64,bool>, video_ready:bool,
     swaps:u64,display_mode:(u32,u32),
     gpu_ring_addr:u64, gpu_ring_dwords:u32,
+    last_pad:crate::input::Controller,input_packet:u32,
 }
 impl Kernel {
-    pub fn new()->Self{Self{next_id:1,threads:BTreeMap::new(),ticks:0,next_tls:0,tls:BTreeMap::new(),next_heap:0,allocations:BTreeMap::new(),critical:BTreeMap::new(),safe_stubs:BTreeSet::new(),events:BTreeMap::new(),video_ready:false,swaps:0,display_mode:(1280,720),gpu_ring_addr:0,gpu_ring_dwords:0}}
+    pub fn new()->Self{Self{next_id:1,threads:BTreeMap::new(),ticks:0,next_tls:0,tls:BTreeMap::new(),next_heap:0,allocations:BTreeMap::new(),critical:BTreeMap::new(),safe_stubs:BTreeSet::new(),events:BTreeMap::new(),video_ready:false,swaps:0,display_mode:(1280,720),gpu_ring_addr:0,gpu_ring_dwords:0,last_pad:crate::input::Controller::default(),input_packet:0}}
     pub fn create_thread(&mut self)->u32{let id=self.next_id;self.next_id=self.next_id.saturating_add(1);self.threads.insert(id,ThreadState::Ready);id}
     pub fn set_thread_state(&mut self,id:u32,state:ThreadState)->Result<(),&'static str>{*self.threads.get_mut(&id).ok_or("unknown thread")?=state;Ok(())}
     pub fn state(&self,id:u32)->Option<ThreadState>{self.threads.get(&id).copied()}
@@ -186,7 +187,37 @@ impl Kernel {
     /// modeled. Unsupported xboxkrnl/xam exports fail explicitly.
     pub fn dispatch_xex_thunk(&mut self,module:u32,ordinal:u32,
         gpr:&mut [u64;32],mem:&mut Memory)->Result<String,String>{
-        if module!=1 {return Err(format!("xam.xex ordinal {ordinal}: HLE nao implementado"));}
+        if module==2 {
+            return match ordinal {
+                0x210=>{ // XamUserGetSigninState: no fabricated Xbox Live account.
+                    gpr[3]=0;
+                    Ok("XamUserGetSigninState: offline (not signed in)".into())
+                },
+                0x191=>{ // XamInputGetState(user, flags, X_INPUT_STATE*).
+                    // X_INPUT_STATE is a 4-byte packet count + 12-byte X_GAMEPAD,
+                    // with big-endian multi-byte members in the PowerPC guest.
+                    let user=gpr[3];let dest=gpr[5] as usize;
+                    if user!=0 {gpr[3]=1167;return Ok("XamInputGetState: user not connected".into());}
+                    if dest==0 {gpr[3]=87;return Ok("XamInputGetState: invalid pointer".into());}
+                    let pad=crate::galaxy_jni::controller_snapshot();
+                    if self.last_pad!=pad {
+                        self.input_packet=self.input_packet.wrapping_add(1);
+                        self.last_pad=pad;
+                    }
+                    mem.write_u32_be(dest,self.input_packet).map_err(str::to_string)?;
+                    mem.write_u16_be(dest+4,pad.buttons as u16).map_err(str::to_string)?;
+                    mem.write_u8(dest+6,pad.left_trigger).map_err(str::to_string)?;
+                    mem.write_u8(dest+7,pad.right_trigger).map_err(str::to_string)?;
+                    for (i,axis) in [pad.left_x,pad.left_y,pad.right_x,pad.right_y].iter().enumerate(){
+                        mem.write_u16_be(dest+8+i*2,*axis as u16).map_err(str::to_string)?;
+                    }
+                    gpr[3]=0;
+                    Ok(format!("XamInputGetState: packet {}",self.input_packet))
+                },
+                _=>Err(format!("xam.xex ordinal {ordinal}: HLE nao implementado")),
+            };
+        }
+        if module!=1{return Err(format!("unknown import module {module}"));}
         match ordinal {
             131=>{ // KeQueryPerformanceFrequency: Xenon 50 MHz guest timebase.
                 gpr[3]=50_000_000;
@@ -204,6 +235,7 @@ impl Kernel {
                 gpr[3]=0;
                 Ok(format!("KeQuerySystemTime: wrote FILETIME to 0x{dest:08X}"))
             },
+            13=>self.dispatch_private(6,gpr,mem), // ExCreateThread: runtime schedules entry at r7
             204=>self.xex_virtual_alloc(gpr,mem),
             220=>self.xex_virtual_free(gpr,mem),
             293=>self.dispatch_private(8,gpr,mem), // RtlEnterCriticalSection
@@ -215,6 +247,7 @@ impl Kernel {
             112=>self.dispatch_private(11,gpr,mem), // KeInitializeEvent, simplified
             157=>self.dispatch_private(12,gpr,mem), // KeSetEvent, simplified
             176=>self.dispatch_private(13,gpr,mem), // KeWaitForSingleObject, nonblocking
+            467=>self.dispatch_private(19,gpr,mem), // VdSetDisplayMode (synthetic)
             450=>self.dispatch_private(18,gpr,mem), // VdInitializeEngines (diagnostic)
             458=>self.dispatch_private(10,gpr,mem), // VdQueryVideoMode (diagnostic)
             445=>self.dispatch_private(20,gpr,mem), // VdGetSystemCommandBuffer (test ring)
