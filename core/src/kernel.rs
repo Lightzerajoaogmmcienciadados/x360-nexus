@@ -188,6 +188,22 @@ impl Kernel {
         gpr:&mut [u64;32],mem:&mut Memory)->Result<String,String>{
         if module!=1 {return Err(format!("xam.xex ordinal {ordinal}: HLE nao implementado"));}
         match ordinal {
+            131=>{ // KeQueryPerformanceFrequency: Xenon 50 MHz guest timebase.
+                gpr[3]=50_000_000;
+                Ok("KeQueryPerformanceFrequency: 50000000 Hz (guest)".into())
+            },
+            132=>{ // KeQuerySystemTime: writes Windows FILETIME to guest pointer.
+                // This is a bounded host-time approximation, not kernel timers.
+                let dest=gpr[3] as usize;
+                let elapsed=std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|e|format!("host clock before Unix epoch: {e}"))?;
+                let ticks=(elapsed.as_secs()+11_644_473_600u64).saturating_mul(10_000_000)
+                    .saturating_add(u64::from(elapsed.subsec_nanos()/100));
+                mem.write_u64_be(dest,ticks).map_err(str::to_string)?;
+                gpr[3]=0;
+                Ok(format!("KeQuerySystemTime: wrote FILETIME to 0x{dest:08X}"))
+            },
             204=>self.xex_virtual_alloc(gpr,mem),
             220=>self.xex_virtual_free(gpr,mem),
             293=>self.dispatch_private(8,gpr,mem), // RtlEnterCriticalSection
@@ -204,7 +220,18 @@ impl Kernel {
             445=>self.dispatch_private(20,gpr,mem), // VdGetSystemCommandBuffer (test ring)
             603=>self.dispatch_private(15,gpr,mem), // VdSwap (test frame counter)
             257=>self.dispatch_private(23,gpr,mem), // NtYieldExecution
-            _=>Err(format!("xboxkrnl.exe ordinal {ordinal}: HLE nao implementado")),
+            _=>{
+                let name=match ordinal {
+                    13=>"ExCreateThread",112=>"KeInitializeEvent",
+                    185=>"MmAllocatePhysicalMemory",186=>"MmAllocatePhysicalMemoryEx",
+                    210=>"NtCreateFile",223=>"NtOpenFile",224=>"NtOpenSymbolicLinkObject",
+                    293=>"RtlEnterCriticalSection",302=>"RtlInitializeCriticalSection",
+                    304=>"RtlLeaveCriticalSection",407=>"XexGetProcedureAddress",
+                    445=>"VdGetSystemCommandBuffer",450=>"VdInitializeEngines",
+                    467=>"VdSetDisplayMode",603=>"VdSwap",_=>"(unknown export)"
+                };
+                Err(format!("xboxkrnl.exe ordinal {ordinal} {name}: HLE nao implementado"))
+            },
         }
     }
 }
@@ -257,4 +284,17 @@ impl Default for Kernel{fn default()->Self{Self::new()}}
         kernel.dispatch_xex_thunk(1,220,&mut regs,&mut mem).unwrap();
         assert_eq!(regs[3],0);assert!(mem.read_u32_be(addr).is_err());
     }
+}
+
+#[cfg(test)] mod v56_time_tests {
+  use super::*;
+  #[test] fn frequency_and_system_time_write_to_guest_big_endian() {
+    let mut mem=Memory::new(4096);
+    let mut k=Kernel::new();let mut g=[0u64;32];
+    k.dispatch_xex_thunk(1,131,&mut g,&mut mem).unwrap();
+    assert_eq!(g[3],50_000_000);
+    g[3]=128;
+    k.dispatch_xex_thunk(1,132,&mut g,&mut mem).unwrap();
+    assert!(mem.read_u64_be(128).unwrap()>133_000_000_000_000_000);
+  }
 }
