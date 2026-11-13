@@ -258,19 +258,30 @@ impl Cpu {
                     _=>return Err(format!("opcode31 XO={xo} unsupported")),
                 }
             },
-            63=>{ // Basic scalar floating point operations. No FPSCR exception model yet.
+            63=>{ // Scalar IEEE arithmetic + FPU-to-CR comparison.
                 let xo=(ins>>1)&1023;
                 let form=xo&31;
                 let fc=((ins>>6)&31) as usize;
                 let a=self.fpr[ra];let b=self.fpr[rb];
-                self.fpr[rt]=match (form,xo) {
-                    (21,_)=>a+b, // fadd
-                    (20,_)=>a-b, // fsub
-                    (18,_)=>a/b, // fdiv
-                    (25,_)=>a*self.fpr[fc], // fmul: FRC operand
-                    (_,72)=>b, // fmr
-                    _=>return Err(format!("FPU opcode63 XO={xo} unsupported")),
-                };
+                if xo==0||xo==32 { // fcmpu/fcmpo -> CR[BF], including unordered.
+                    let bf=(ins>>23)&7;
+                    let flags=if a.is_nan()||b.is_nan(){1}
+                        else if a<b{8}else if a>b{4}else{2};
+                    self.cr_field(bf,flags);
+                }else{
+                    self.fpr[rt]=match (form,xo) {
+                        (21,_)=>a+b, // fadd
+                        (20,_)=>a-b, // fsub
+                        (18,_)=>a/b, // fdiv
+                        (25,_)=>a*self.fpr[fc], // fmul
+                        (_,12)=>b as f32 as f64, // frsp
+                        (_,40)=>-b, // fneg
+                        (_,264)=>b.abs(), // fabs
+                        (_,136)=>-b.abs(), // fnabs
+                        (_,72)=>b, // fmr
+                        _=>return Err(format!("FPU opcode63 XO={xo} unsupported")),
+                    };
+                }
             },
             17=>return Err(format!("sc: guest syscall, r0=0x{:X}",self.gpr[0])),
             _=>return Err(format!("unsupported opcode {op} at PC=0x{:08X} ins={ins:08X}",self.pc)),
@@ -359,5 +370,31 @@ use super::*;
         let xori=(26u32<<26)|(3<<21)|(5<<16)|0xFF;
         mem.write(4,&xori.to_be_bytes()).unwrap();
         cpu.step_mut(&mut mem).unwrap();assert_eq!(cpu.gpr[5],0x1234_5678_9ABC_DE0F);
+    }
+}
+
+#[cfg(test)] mod v57_fpu_cr {
+    use super::*;
+    #[test] fn fcmpu_sets_cr6_eq_for_minecraft_boot_branches(){
+        let mut m=Memory::new(32);let mut cpu=Cpu::new();
+        cpu.fpr[2]=4.0;cpu.fpr[3]=4.0;
+        let fcmpu=(63u32<<26)|(6<<23)|(2<<16)|(3<<11);
+        m.write(0,&fcmpu.to_be_bytes()).unwrap();
+        cpu.step_mut(&mut m).unwrap();
+        assert_eq!((cpu.cr>>4)&15,2);
+        cpu.pc=0;cpu.fpr[3]=f64::NAN;
+        cpu.step_mut(&mut m).unwrap();assert_eq!((cpu.cr>>4)&15,1);
+    }
+    #[test] fn bdnz_decrements_ctr_before_testing(){
+        let mut m=Memory::new(32);let mut cpu=Cpu::new();
+        // BO=16 -> CTR not tested; BO=16 is unconditional on counter.
+        // BO=16? actual bdnz uses BO=16? No: bdnz uses BO=16 (0b10000)
+        // with CR ignored and CTR decremented; form BO=16 still tests CTR.
+        let bdnz=(16u32<<26)|(16u32<<21)|8u32;
+        m.write(0,&bdnz.to_be_bytes()).unwrap();
+        cpu.ctr=2;cpu.step_mut(&mut m).unwrap();
+        assert_eq!(cpu.ctr,1);assert_eq!(cpu.pc,8);
+        cpu.pc=0;cpu.step_mut(&mut m).unwrap();
+        assert_eq!(cpu.ctr,0);assert_eq!(cpu.pc,4);
     }
 }
