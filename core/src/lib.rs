@@ -11,6 +11,11 @@ pub mod xex_trace;
 pub mod runtime;
 pub mod scheduler;
 pub mod mmu;
+// Android-specific JNI file-descriptor handling must not be built on Windows.
+#[cfg(target_os = "android")]
+mod galaxy_jni;
+#[cfg(not(target_os = "android"))]
+#[path = "galaxy_jni_desktop.rs"]
 mod galaxy_jni;
 use audio::Audio;
 use cpu::Cpu;
