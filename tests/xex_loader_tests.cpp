@@ -187,6 +187,37 @@ int main(){
     assert(hdr.imports[0].guest_slots[0]==0x82001000);
     assert(hdr.imports[1].guest_slots[0]==0x82001100);
   }
+  // Xenia lays out import records at exactly (optional_header + 12 +
+  // string_table.size), not at the next 4-byte aligned absolute offset.
+  // A non-aligned string table used to shift the library header and silently
+  // produce wrong import slot addresses in the current XEX loader.
+  {
+    auto with_imports=xex_sample(pe);
+    u32be(with_imports,0x14,4);
+    u32be(with_imports,0x30,0x000103FF);
+    u32be(with_imports,0x34,0x80);
+    const size_t off=0x80;
+    constexpr uint32_t table_bytes=13; // "xboxkrnl.exe" + NUL, no trailing pad
+    u32be(with_imports,off,12+table_bytes+44);
+    u32be(with_imports,off+4,table_bytes);
+    u32be(with_imports,off+8,1);
+    std::memcpy(with_imports.data()+off+12,"xboxkrnl.exe",12);
+    const size_t record=off+12+table_bytes; // unaligned on purpose
+    u32be(with_imports,record,44);
+    u16be(with_imports,record+36,0);
+    u16be(with_imports,record+38,1);
+    u32be(with_imports,record+40,0x82001010);
+    const auto hdr=parse_headers(with_imports);
+    assert(hdr.imports.size()==1);
+    assert(hdr.imports[0].name=="xboxkrnl.exe");
+    assert(hdr.imports[0].guest_slots.size()==1);
+    assert(hdr.imports[0].guest_slots[0]==0x82001010);
+    // A truncated last name must not be accepted as an import library.
+    u32be(with_imports,off+4,12); // missing terminating NUL
+    bool rejected=false;
+    try{(void)parse_headers(with_imports);}catch(const std::runtime_error&){rejected=true;}
+    assert(rejected);
+  }
   auto basic=xex_sample(pe,1,0);
   assert(extract_pe(basic,parse_headers(basic))==pe);
   const auto lzx=xex_normal_fixture(pe);
