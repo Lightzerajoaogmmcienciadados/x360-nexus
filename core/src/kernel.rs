@@ -11,14 +11,16 @@ pub struct Kernel{
     allocations:BTreeMap<u64,usize>,critical:BTreeMap<u64,u32>,
     safe_stubs:BTreeSet<(String,u32)>,events:BTreeMap<u64,bool>, video_ready:bool,
     swaps:u64,display_mode:(u32,u32),
+    gpu_ring_addr:u64, gpu_ring_dwords:u32,
 }
 impl Kernel {
-    pub fn new()->Self{Self{next_id:1,threads:BTreeMap::new(),ticks:0,next_tls:0,tls:BTreeMap::new(),next_heap:0,allocations:BTreeMap::new(),critical:BTreeMap::new(),safe_stubs:BTreeSet::new(),events:BTreeMap::new(),video_ready:false,swaps:0,display_mode:(1280,720)}}
+    pub fn new()->Self{Self{next_id:1,threads:BTreeMap::new(),ticks:0,next_tls:0,tls:BTreeMap::new(),next_heap:0,allocations:BTreeMap::new(),critical:BTreeMap::new(),safe_stubs:BTreeSet::new(),events:BTreeMap::new(),video_ready:false,swaps:0,display_mode:(1280,720),gpu_ring_addr:0,gpu_ring_dwords:0}}
     pub fn create_thread(&mut self)->u32{let id=self.next_id;self.next_id=self.next_id.saturating_add(1);self.threads.insert(id,ThreadState::Ready);id}
     pub fn set_thread_state(&mut self,id:u32,state:ThreadState)->Result<(),&'static str>{*self.threads.get_mut(&id).ok_or("unknown thread")?=state;Ok(())}
     pub fn state(&self,id:u32)->Option<ThreadState>{self.threads.get(&id).copied()}
     pub fn tick(&mut self){self.ticks=self.ticks.wrapping_add(1)}
     pub fn ticks(&self)->u64{self.ticks}
+    pub fn gpu_ring_snapshot(&self)->(u64,u32,u64){(self.gpu_ring_addr,self.gpu_ring_dwords,self.swaps)}
     pub fn register_secondary_stub(&mut self,library:&str,ordinal:u32)->Result<(),String>{
         if !matches!(library,"xboxkrnl.exe"|"xam.xex") || ordinal==0 {return Err("invalid HLE stub registration".into())}
         self.safe_stubs.insert((library.to_owned(),ordinal));Ok(())
@@ -91,6 +93,31 @@ impl Kernel {
                 if !(320..=3840).contains(&w)||!(240..=2160).contains(&h){return Err("unsupported synthetic display mode".into());}
                 self.display_mode=(w,h);"VdSetDisplayMode (request logged only)"
             },
+            20=>{ // Private demo ABI: return a guest-mapped PM4 command ring.
+                // Reserved 64KiB in the 512MiB guest window; real Xenos uses
+                // graphics MMIO and write pointers which are NOT emulated.
+                if !mem.is_sparse(){return Err("VdGetSystemCommandBuffer needs sparse guest RAM".into());}
+                if self.gpu_ring_addr==0 {
+                    let at=0x9F00_0000u64;
+                    mem.set_page_permissions(at,65536,Memory::READ|Memory::WRITE)
+                        .map_err(str::to_string)?;
+                    self.gpu_ring_addr=at;
+                }
+                gpr[3]=self.gpu_ring_addr;
+                gpr[4]=65536;
+                return Ok(format!("VdGetSystemCommandBuffer test ring -> 0x{:X} (64KiB)",self.gpu_ring_addr));
+            },
+            21=>{ // Private test ABI: submit DWORD count for the mapped ring.
+                let count=gpr[3] as u32;
+                if self.gpu_ring_addr==0||count==0||count>4096{return Err("PM4 submit: no ring or invalid word count".into());}
+                self.gpu_ring_dwords=count;
+                "SubmitGpuRing (test ABI; read at VdSwap only)"
+            },
+            22=>{ // Local offline profile. Never fake a signed-in Xbox Live user.
+                gpr[3]=0;
+                return Ok("XamUserGetSigninState: offline local test user".into());
+            },
+            23=>{std::thread::yield_now();"NtYieldExecution (host cooperative test)"},
             _=>return Err(format!("unknown private HLE service {id}")),
         };
         gpr[3]=0;
@@ -109,6 +136,18 @@ impl Default for Kernel{fn default()->Self{Self::new()}}
     regs[3]=0x100;k.dispatch_private(12,&mut regs,&mut m).unwrap();
     regs[3]=0x100;k.dispatch_private(13,&mut regs,&mut m).unwrap();assert_eq!(regs[3],0);
     k.dispatch_private(18,&mut regs,&mut m).unwrap();k.dispatch_private(15,&mut regs,&mut m).unwrap();
+ }
+ #[test]fn gpu_ring_private_abi(){
+   let mut k=Kernel::new();
+   let mut m=Memory::sparse(0x8200_0000,512*1024*1024).unwrap();
+   let mut g=[0u64;32];
+   assert!(k.dispatch_private(20,&mut g,&mut m).unwrap().contains("CommandBuffer"));
+   assert_eq!(g[3],0x9F00_0000);
+   m.write(g[3] as usize,&[0xC0,0,0,0]).unwrap();
+   g[3]=1; k.dispatch_private(21,&mut g,&mut m).unwrap();
+   k.dispatch_private(18,&mut g,&mut m).unwrap();
+   k.dispatch_private(15,&mut g,&mut m).unwrap();
+   assert_eq!(k.gpu_ring_snapshot(),(0x9F00_0000,1,1));
  }
  #[test]fn virtual_memory(){let mut k=Kernel::new();let mut m=Memory::with_base(vec![0;1024*1024],0x82000000);let mut g=[0u64;32];g[3]=0x82000100;g[4]=0x82000104;m.write_u32_be(g[4] as usize,4096).unwrap();k.dispatch_private(1,&mut g,&mut m).unwrap();assert_eq!(g[3],0);assert!(m.read_u32_be(0x82000100).unwrap()>=0x82010000);}
 }
