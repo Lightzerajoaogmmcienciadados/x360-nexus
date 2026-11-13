@@ -42,7 +42,7 @@ impl Cpu {
     }
     pub fn step(&mut self,m:&Memory)->Result<(),String>{
         // Compatibility wrapper; stores require mutable memory, use step_mut.
-        let mut local=Memory::with_base(m.read(m.base() as usize,m.len()).map_err(str::to_string)?.to_vec(),m.base());
+        let mut local=Memory::with_base(m.read(m.base() as usize,m.len()).map_err(str::to_string)?,m.base());
         self.step_mut(&mut local)
     }
     pub fn step_mut(&mut self,mem:&mut Memory)->Result<(),String>{
@@ -57,11 +57,19 @@ impl Cpu {
             14=>{let base=if ra==0{0}else{self.gpr[ra]};self.gpr[rt]=base.wrapping_add(imm as i64 as u64);},
             15=>{let base=if ra==0{0}else{self.gpr[ra]};self.gpr[rt]=base.wrapping_add(((imm as i64)<<16) as u64);},
             24=>{self.gpr[ra]=self.gpr[rt] | (ins as u16 as u64);},
+            28=>{self.gpr[ra]=self.gpr[rt] & (ins as u16 as u64);self.cr0(self.gpr[ra]);}, // andi.
             25=>{self.gpr[ra]=self.gpr[rt] | ((ins as u16 as u64)<<16);},
             21=>{let sh=(ins>>11)&31;let mb=(ins>>6)&31;let me=(ins>>1)&31;
                 let v=(self.gpr[rt] as u32).rotate_left(sh)&mask32(mb,me);
                 self.gpr[ra]=v as u64;if ins&1!=0{self.cr0(self.gpr[ra]);}},
             10|11=>self.cmp(ins,op==10),
+            30=>{ // rldicl (MD-form subset), 64-bit rotate and clear left
+                let sh=((ins>>11)&31)|((ins&2)<<4);
+                let mb=((ins>>6)&31)|((ins&0x20)>>0);
+                let value=self.gpr[rt].rotate_left(sh);
+                self.gpr[ra]=value & (u64::MAX>>mb);
+                if ins&1!=0{self.cr0(self.gpr[ra]);}
+            },
             8=>{ // subfic RT,RA,SIMM
                 self.gpr[rt]=(imm as i64 as u64).wrapping_sub(self.gpr[ra]);
             },
@@ -86,6 +94,15 @@ impl Cpu {
                     _=>unreachable!(),
                 }
                 if update{self.gpr[ra]=addr as u64;}
+            },
+            58|62=>{ // ld/std DS-form, update variants not yet supported
+                let ds=(ins & 0xFFFC) as i16 as i64;
+                let base=if ra==0{0}else{self.gpr[ra]};
+                let addr=base.wrapping_add(ds as u64) as usize;
+                if addr%8!=0{return Err("unaligned ld/std".into());}
+                if ins&3!=0{return Err("ld/std update/other DS form not supported".into());}
+                if op==58{self.gpr[rt]=mem.read_u64_be(addr).map_err(str::to_string)?;}
+                else{mem.write_u64_be(addr,self.gpr[rt]).map_err(str::to_string)?;}
             },
             48|50|52|54=>{ // lfs, lfd, stfs, stfd
                 let addr=self.ea(ra,imm)?;
@@ -127,6 +144,18 @@ impl Cpu {
             31=>{
                 let xo=(ins>>1)&1023;
                 match xo {
+                    0|32=>{ // cmp / cmpl register
+                        let field=(ins>>23)&7;let is64=ins&(1<<21)!=0;
+                        let a=self.gpr[ra];let b=self.gpr[rb];
+                        let bits=if xo==0 {
+                            let (a,b)=if is64 {(a as i64,b as i64)} else {(a as i32 as i64,b as i32 as i64)};
+                            if a<b{8}else if a>b{4}else{2}
+                        }else{
+                            let (a,b)=if is64 {(a,b)}else{(a as u32 as u64,b as u32 as u64)};
+                            if a<b{8}else if a>b{4}else{2}
+                        }; self.cr_field(field,bits);
+                    },
+                    19=>{self.gpr[rt]=self.cr as u64;}, // mfcr
                     266=>{self.gpr[rt]=self.gpr[ra].wrapping_add(self.gpr[rb]);if ins&1!=0{self.cr0(self.gpr[rt]);}},
                     40=>{self.gpr[rt]=self.gpr[rb].wrapping_sub(self.gpr[ra]);if ins&1!=0{self.cr0(self.gpr[rt]);}}, // subf
                     316=>{self.gpr[ra]=self.gpr[rt]^self.gpr[rb];if ins&1!=0{self.cr0(self.gpr[ra]);}},
