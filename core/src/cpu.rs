@@ -162,7 +162,8 @@ impl Cpu {
                     28=>{self.gpr[ra]=self.gpr[rt]&self.gpr[rb];if ins&1!=0{self.cr0(self.gpr[ra]);}},
                     24=>{self.gpr[ra]=(self.gpr[rt] as u32).wrapping_shl(self.gpr[rb] as u32&31) as u64;},
                     23|151|87|215|279|407=>{
-                        let addr=self.gpr[ra].wrapping_add(self.gpr[rb]);
+                        let base=if ra==0 {0} else {self.gpr[ra]};
+                        let addr=base.wrapping_add(self.gpr[rb]);
                         let address=usize::try_from(addr).map_err(|_|"indexed address overflow")?;
                         match xo {
                             23=>{if addr%4!=0{return Err("unaligned lwzx".into())};self.gpr[rt]=mem.read_u32_be(address).map_err(str::to_string)? as u64},
