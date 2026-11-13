@@ -125,7 +125,7 @@ ImportInventory inspect_import_thunks(const std::vector<ImportLibrary>& libs,
             if(type==1 && ordinal!=0){
                 ++result.type1_records;
                 if(uint64_t(address)+16>end){++result.malformed;continue;}
-                if(!exec_contains(address,16,executable_ranges)){
+                if(!executable_ranges.empty() && !exec_contains(address,16,executable_ranges)){
                     ++result.type1_outside_exec;
                     if(result.examples.size()<12){
                         std::ostringstream sample;
