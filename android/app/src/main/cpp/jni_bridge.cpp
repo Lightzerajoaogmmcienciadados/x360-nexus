@@ -291,3 +291,26 @@ extern "C" bool x360_try_read_guest_ram(uint32_t address, void* dst, size_t len)
         return true;
     } catch (...) {return false;}
 }
+
+// v5.1 streaming bridge. Each JNI transfer is at most 64 KiB: no 16-MiB
+// Java snapshot and no 512-MiB dense guest RAM allocation are required.
+// Reads are permitted only inside a successfully mapped PE32 image.
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_x360nexus_MainActivity_nativePreparedChunk(JNIEnv* env,jobject,jlong address,jint count){
+    if(address<0 || address>UINT32_MAX || count<=0 || count>65536) return nullptr;
+    std::vector<uint8_t> buffer(static_cast<size_t>(count));
+    {
+        std::lock_guard<std::mutex> lock(g_memory_mutex);
+        if(!g_prepared || !g_ram)return nullptr;
+        const uint64_t start=static_cast<uint64_t>(address);
+        const uint64_t lo=g_prepared->base;
+        const uint64_t hi=lo+g_prepared->image_size;
+        if(start<lo || start+static_cast<uint64_t>(count)>hi)return nullptr;
+        try {g_ram->read(static_cast<uint32_t>(address),buffer.data(),buffer.size());}
+        catch (...){return nullptr;}
+    }
+    jbyteArray result=env->NewByteArray(count);
+    if(result)env->SetByteArrayRegion(result,0,count,reinterpret_cast<const jbyte*>(buffer.data()));
+    std::fill(buffer.begin(),buffer.end(),0);
+    return result;
+}
