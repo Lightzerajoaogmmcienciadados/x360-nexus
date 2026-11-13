@@ -1,42 +1,36 @@
-# X360: GALAXY — v5.1 (experimental Android CPU / GPU integration)
+# X360 GALAXY v5.2 — PM4 guest-memory bridge, partial HLE, protected key input
 
-This is an incremental update over v5.0 of the open-source educational X360 Nexus project. **It does not boot commercial Xbox 360 games.** A successful APK build only proves the source compiles and the automated tests pass.
+Incremental update of the working v5.1 XEX2/ISO/AES/LZX/CPU stack. The existing source is preserved.
 
-## New in v5.1
+## New in v5.2
 
-- **Guest CPU:** expanded PowerPC interpreter for select CRT/boot patterns (including `subf`, `cmpw/cmplw`, `andi.`, `rldicl` subset, `ld/std` basic DS form, indexed reads/writes, LR/CTR/CR and basic FPU). Unimplemented instructions still report PC and opcode and pause rather than silently continuing.
-- **Continuous native execution:** Rust worker thread executes bounded step batches until stopped or an unsupported operation occurs. The Android UI polls IPS, PC, opcode, and r3–r10 without executing the CPU on the UI thread.
-- **Paged image transfer:** Android streams a prepared PE32 from the original C++ XDVDFS/XEX/AES/LZX loader into Rust-owned **sparse 512 MiB guest RAM**, in 64 KiB chunks. Supports PE image sizes up to 128 MiB, replacing the prior 16 MiB Java-side snapshot limit. Host pages are committed on demand and guest accesses enforce page read/write/execute permissions. This is **not** an Xbox 360 TLB/MMU or a shared C++/Rust hardware memory model.
-- **HLE test services:** synthetic memory allocations now map/unmap guest pages. The private test ABI and cooperative scheduler are retained. Xbox kernel and XAM commercial ordinals are not fully implemented and will fail diagnostically.
-- **PM4:** diagnostic command processor now records `EVENT_WRITE` packets in addition to Type 0/2/3, `SET_CONSTANT`, `REG_RMW`, and observations of draw commands. A custom **test-only** register `0xC000` can change the OpenGL clear color. It is not an Xbox Xenos GPU register or real shader translation.
-- **Android:** fixes status-bar inset handling for buttons, adds analog-stick views and more virtual button overlays wired to the experimental Rust JNI pad state. SurfaceView/EGL/OpenGL ES diagnostic output is preserved.
+- **Private hexadecimal XEX key entry**: Android dialog validates precisely 32 hex digits, accepts a user-provided 16-byte key, never prints the key or embeds keys in the APK. The optional `keys.bin` reader still works.
+- **Encrypted persistence**: AndroidKeyStore generates an AES-256-GCM wrapping key. SharedPreferences stores **only authenticated ciphertext and IV**, never a plaintext key or its hex form. Keys can become unreadable after OS reset/Keystore changes and must be re-entered. `allowBackup=false` remains enabled.
+- **PM4**: safe Type 0/2/3 parser now recognizes `LOAD_ALU_CONSTANT (0x2F)` with bounded, injected guest-memory reader, Type 3 NOP, and shader register constants. No guest shader translation is claimed; unsupported DRAW_INDX is logged. Tests include valid/invalid memory reads.
+- **Rust RAM -> PM4 C++**: `nativeReadSessionMemory` provides bounded 16-KiB guest-memory reads; `nativeSubmitPm4Bytes` decodes big-endian DWORDs from the current CPU session. There is no unrestricted guest memory pointer or 512-MiB copy.
+- **Guest command ring for original test software only**: private HLE service 20 maps 64 KiB at `0x9F000000`; service 21 sets the number of submitted DWORDs (up to 4096); existing service 15 VdSwap increments its counter. Kotlin observes the new `GPU_RING`, `GPU_DWORDS`, and `SWAPS` diagnostics and submits readable packets to C++ when the swap count advances.
+- **Additional *private test ABI* services**: service 22 reports an offline local test profile (no Xbox authentication); 23 yields to host thread. These are not Xbox 360 ordinals, and real `xboxkrnl.exe` / `xam.xex` HLE is still missing.
+- **Android**: v5.2 name/version and protection against plaintext key storage; same EGL / GLES diagnostic video surface and controller overlay.
 
-## Loading and testing
+## Current limitations — important
 
-The loader sequence remains: local ISO -> XDVDFS -> `default.xex` -> XEX2 -> optional user-provided 16-byte key -> AES-128-CBC -> Basic/LZX -> mapped PE32 -> streamed guest pages -> bounded-ISA PowerPC thread. No console key or games are provided. Unsupported images, imports, instructions and PM4 draw/shader commands stop or report an explicit diagnostic.
+This is **not** a compatible Xbox 360 game emulator. Commercial ISO boot is not proven and Minecraft/Forza will not run correctly. A complete Xenos shader translator, Xenos register/MMIO/DMA interception, EDRAM resolves, real shader fetching, textures and fully functional `xboxkrnl/xam` ordinal IAT are **not implemented**. The GLES triangle is an original diagnostic shader; PM4 constants affect only test visualization. Vulkan remains a setting request, not an active backend. We do **not** claim it is a real game frame.
 
-To run native C++ unit tests:
+A game cannot be made to work by returning zero for unknown imports: unsupported calls must be visible and execution paused. No built-in retail/devkit keys, games or firmware are distributed.
 
-```sh
-cmake -S . -B build/host -DCMAKE_BUILD_TYPE=Release
-cmake --build build/host --parallel 2
-ctest --test-dir build/host --output-on-failure
-```
+## Build
 
-To run Rust tests:
+`cmake -S . -B build/host && cmake --build build/host && ctest --test-dir build/host --output-on-failure`
 
-```sh
-cargo test --manifest-path core/Cargo.toml
-```
+Android ARM64 APK is built by `.github/workflows/build-x360-android-apk.yml` (Java 17, Rust stable, Android SDK 35, NDK 27.2.12479018, CMake 3.22.1, Gradle 8.10.2).
 
-Android APK via `.github/workflows/build-x360-android-apk.yml`. The artifact is named `X360-Nexus-v5.1-Android-ARM64-Debug-APK`.
+## Updated files
 
-## Modified/new files relative to v5.0
+- `android/app/src/main/java/com/x360nexus/SecretKeyStore.kt` (new)
+- `android/app/src/main/java/com/x360nexus/MainActivity.kt`
+- `android/app/src/main/cpp/xenos_pm4.{hpp,cpp}`, `gpu_pm4_jni.cpp`, `xenos_video.cpp`
+- `core/src/kernel.rs`, `core/src/runtime.rs`
+- `tests/pm4_tests.cpp`
+- Android manifest, layout, Gradle, CMakeLists, Cargo.toml, workflow, README
 
-- Rust: `core/src/cpu.rs`, `core/src/memory.rs`, `core/src/kernel.rs`, `core/src/runtime.rs`, `core/Cargo.toml`.
-- C++: `android/app/src/main/cpp/jni_bridge.cpp`, `xenos_pm4.hpp`, `xenos_pm4.cpp`, `xenos_video.cpp`.
-- Kotlin: `android/app/src/main/java/com/x360nexus/MainActivity.kt`, `AnalogPad.kt` (new).
-- XML: `android/app/src/main/res/layout/activity_main.xml`.
-- Build/test: `android/app/build.gradle`, `.github/workflows/build-x360-android-apk.yml`, `tests/pm4_tests.cpp`.
-
-**Known limitations:** incomplete Xbox PowerPC ISA (including VMX128 and exceptions), incomplete Xbox 360 kernel/XAM imports and file handles, no Xenos shader translation, no Vulkan backend, no automatic game GPU MMIO/DMA interception, and no independently verified commercial game compatibility. The diagnostic GL scene is not game output.
+Reference for actual PM4 opcode values and register classes: [Xenia GPU/Xenos](https://github.com/xenia-project/xenia/blob/master/src/xenia/gpu/xenos.h) and its [command processor](https://github.com/xenia-project/xenia/blob/master/src/xenia/gpu/command_processor.cc).
