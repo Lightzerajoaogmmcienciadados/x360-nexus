@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView android:id="@+id/rootScroll" xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent" android:layout_height="match_parent"
-    android:fitsSystemWindows="true" android:clipToPadding="false" android:fillViewport="true" android:background="#0D0E12">
+    android:fitsSystemWindows="false" android:clipToPadding="false" android:fillViewport="true" android:background="#0D0E12">
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="vertical" android:padding="16dp">
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:text="X360 NEXUS" android:textSize="30sp" android:textStyle="bold"
             android:textColor="#2ECC71" android:paddingBottom="4dp" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:text="GALAXY / PROJECT XENON 5.1  •  NÚCLEO EM DESENVOLVIMENTO"
+            android:text="GALAXY / PROJECT XENON 5.4  •  NÚCLEO EM DESENVOLVIMENTO"
             android:textColor="#B7C1BD" android:textSize="12sp" android:paddingBottom="14dp" />
         <FrameLayout android:layout_width="match_parent" android:layout_height="220dp"
             android:layout_marginBottom="10dp" android:background="@drawable/nexus_card">
@@ -16,7 +16,7 @@
                 android:layout_height="match_parent" />
             <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_gravity="top" android:background="#BB101319"
-                android:text="V5.1 • GLES / PM4 DIAGNÓSTICO (NÃO É IMAGEM DO JOGO)"
+                android:text="V5.4 • GLES / PM4 DIAGNÓSTICO (NÃO É IMAGEM DO JOGO)"
                 android:textSize="10sp" android:textColor="#2ECC71" android:padding="6dp" />
 
             <!-- Compact semi-transparent controller overlay: both analog sticks and
