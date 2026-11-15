@@ -1,0 +1,66 @@
+name: Pinyon Shift - APK-base (sem jogo)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["pinyon-shell-build"]
+    paths:
+      - ".github/workflows/pinyon-shell-apk.yml"
+      - "tools/pinyon-shell/package_shell.py"
+
+permissions:
+  contents: read
+
+jobs:
+  package-shell:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Android command-line tools
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK and Android build tools
+        run: |
+          sdkmanager --install "ndk;29.0.14206865" "build-tools;35.0.0"
+
+      - name: Download and validate official shell kit
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 5 --retry-delay 3 \
+            --output android-shell.tar.xz \
+            "https://github.com/arcanite24/pinyon-shift/releases/download/v0.8.2/android-shell-101ad468f139-android-arm64.tar.xz"
+          echo '6c08773dc514ea0492b653d5fcf09231c0d9d9f3516595e52042ec1eac04fa9f  android-shell.tar.xz' | sha256sum --check
+
+      - name: Create APK (setup-shell only, no game)
+        run: |
+          set -euo pipefail
+          python3 tools/pinyon-shell/package_shell.py \
+            --kit android-shell.tar.xz \
+            --libcxx "$ANDROID_SDK_ROOT/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" \
+            --output pinyon-shell-unsigned.apk
+
+      - name: Align, sign and verify APK
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$ANDROID_SDK_ROOT/build-tools/35.0.0"
+          "$BUILD_TOOLS/zipalign" -f -p 4 pinyon-shell-unsigned.apk pinyon-shell-aligned.apk
+          keytool -genkeypair -keystore /tmp/pinyon-shell-debug.jks \
+            -alias shell-debug -keyalg RSA -keysize 3072 \
+            -validity 3650 -storepass android -keypass android \
+            -dname "CN=Pinyon Shell CI Test, O=Personal Build, C=BR" -noprompt
+          "$BUILD_TOOLS/apksigner" sign --ks /tmp/pinyon-shell-debug.jks \
+            --ks-key-alias shell-debug --ks-pass pass:android --key-pass pass:android \
+            --out PinyonShift-0.8.2-SHELL-ONLY.apk pinyon-shell-aligned.apk
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs PinyonShift-0.8.2-SHELL-ONLY.apk
+          unzip -t PinyonShift-0.8.2-SHELL-ONLY.apk | tail -1
+
+      - name: Upload APK for download
+        uses: actions/upload-artifact@v4
+        with:
+          name: PinyonShift-0.8.2-SHELL-ONLY
+          path: PinyonShift-0.8.2-SHELL-ONLY.apk
+          retention-days: 30
+          if-no-files-found: error
