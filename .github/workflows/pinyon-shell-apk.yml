@@ -19,12 +19,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Android command-line tools
-        uses: android-actions/setup-android@v3
-
       - name: Install NDK and Android build tools
         run: |
-          sdkmanager --install "ndk;29.0.14206865" "build-tools;35.0.0"
+          set -euo pipefail
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          SDKMANAGER=$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -name sdkmanager | head -n 1)
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null || true
+          "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --install "ndk;29.0.14206865" "build-tools;35.0.0"
 
       - name: Download and validate official shell kit
         run: |
